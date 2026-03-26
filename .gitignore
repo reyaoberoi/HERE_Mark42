@@ -5,5 +5,7 @@ __pycache__/
 /venv
 README.md
 
+malaysia-singapore-brunei.gpkg
+*.gpkg
 sg_stats.json
 venv

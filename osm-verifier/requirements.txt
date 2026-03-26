@@ -5,6 +5,13 @@ dateparser
 sentence-transformers
 spacy
 scikit-learn
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-dotenv
+httpx
+psycopg2-binary
 anthropic
 fastapi
 uvicorn[standard]

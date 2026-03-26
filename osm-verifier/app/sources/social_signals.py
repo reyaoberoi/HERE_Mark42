@@ -65,7 +65,7 @@ async def _search_duckduckgo(session: aiohttp.ClientSession, name: str) -> dict:
 
 def _compute_recency_score(posts: list[dict]) -> float:
     """
-    Score 0.0–1.0 based on how recent the Reddit posts are.
+    Score 0.0-1.0 based on how recent the Reddit posts are.
     Recent post (< 3 months) = high score. Older = lower.
     No posts = 0.0
     """
