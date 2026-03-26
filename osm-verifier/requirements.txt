@@ -1,3 +1,11 @@
+aiohttp
+playwright
+beautifulsoup4
+dateparser
+sentence-transformers
+spacy
+scikit-learn
+anthropic
 fastapi
 uvicorn[standard]
 pydantic
