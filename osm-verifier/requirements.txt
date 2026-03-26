@@ -1,6 +1,8 @@
-fastapi
-uvicorn[standard]
-pydantic
-pydantic-settings
-python-dotenv
-httpx
+aiohttp
+playwright
+beautifulsoup4
+dateparser
+sentence-transformers
+spacy
+scikit-learn
+anthropic
