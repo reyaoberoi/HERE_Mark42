@@ -1,0 +1,96 @@
+{
+  "osm_node_id": "3270116660",
+  "confidence": 0.537,
+  "recommendation": "REJECT",
+  "sources": [
+    {
+      "source": "food_platforms",
+      "signal": "closed",
+      "confidence": 0.6,
+      "detail": "Burpple: Last activity: 2023-11-26 | HGW: None"
+    },
+    {
+      "source": "social_signal",
+      "signal": "active",
+      "confidence": 0.85,
+      "detail": "13 Reddit posts, latest 2026-01-16"
+    },
+    {
+      "source": "gov_data",
+      "signal": "unknown",
+      "confidence": 0.3,
+      "detail": "[excluded \u2014 low confidence] No gov match (best score 0.0)"
+    },
+    {
+      "source": "geo",
+      "signal": "unknown",
+      "confidence": 0.2,
+      "detail": "[excluded \u2014 low confidence] No OSM nodes found within 500m"
+    },
+    {
+      "source": "stats",
+      "signal": "unknown",
+      "confidence": 0.3,
+      "detail": "[excluded \u2014 low confidence] Stats cache not built yet"
+    }
+  ],
+  "narrative": "POI appears to be permanently closed \u2014 flagging for removal. Weighted score: -0.277. [food_platforms] \u2796 closed (conf 60%, effective weight 0.429) | [social_signal] \u2795 active (conf 85%, effective weight 0.243) | [gov_data] \u2b1c unknown (conf 30%, effective weight 0.000) | [geo] \u2b1c unknown (conf 20%, effective weight 0.000) | [stats] \u2b1c unknown (conf 30%, effective weight 0.000) | No signal from: gov_data, geo, stats | Area density: 0 nodes/500m cell",
+  "before_image_url": null,
+  "after_image_url": null,
+  "changeset_diff": {
+    "weighted_score": -0.2766,
+    "source_breakdown": [
+      {
+        "source": "food_platforms",
+        "signal": "closed",
+        "vote": -1.0,
+        "source_confidence": 0.6,
+        "base_weight": 0.25,
+        "effective_weight": 0.4286,
+        "detail": "Burpple: Last activity: 2023-11-26 | HGW: None"
+      },
+      {
+        "source": "social_signal",
+        "signal": "active",
+        "vote": 1.0,
+        "source_confidence": 0.85,
+        "base_weight": 0.1,
+        "effective_weight": 0.2429,
+        "detail": "13 Reddit posts, latest 2026-01-16"
+      },
+      {
+        "source": "gov_data",
+        "signal": "unknown",
+        "vote": 0.0,
+        "source_confidence": 0.3,
+        "base_weight": 0.3,
+        "effective_weight": 0.0,
+        "detail": "[excluded \u2014 low confidence] No gov match (best score 0.0)"
+      },
+      {
+        "source": "geo",
+        "signal": "unknown",
+        "vote": 0.0,
+        "source_confidence": 0.2,
+        "base_weight": 0.25,
+        "effective_weight": 0.0,
+        "detail": "[excluded \u2014 low confidence] No OSM nodes found within 500m"
+      },
+      {
+        "source": "stats",
+        "signal": "unknown",
+        "vote": 0.0,
+        "source_confidence": 0.3,
+        "base_weight": 0.1,
+        "effective_weight": 0.0,
+        "detail": "[excluded \u2014 low confidence] Stats cache not built yet"
+      }
+    ],
+    "unknown_sources": [
+      "gov_data",
+      "geo",
+      "stats"
+    ],
+    "neighbourhood_density": 0
+  }
+}

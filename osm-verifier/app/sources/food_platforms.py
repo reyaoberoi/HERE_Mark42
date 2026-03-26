@@ -2,21 +2,25 @@
 S5 — Burpple + HungryGoWhere Scraper
 Person B owns this file.
 Extracts: last review date, closed badge per platform.
-Uses Playwright headless — search snippet only, not full listing.
+Uses Playwright sync API in a thread pool to avoid Windows asyncio issues.
 """
 
 import asyncio
 import re
+import logging
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 import dateparser
-from playwright.async_api import async_playwright
+from playwright.sync_api import sync_playwright
+
+logger = logging.getLogger(__name__)
+
+TIMEOUT_MS = 20000
+_executor = ThreadPoolExecutor(max_workers=2)
 
 
-TIMEOUT_MS = 8000
-
-
-async def _scrape_burpple(name: str, location: str = "Singapore") -> dict:
-    """Scrape Burpple search snippet for last review date + closed badge."""
+def _scrape_burpple_sync(name: str, location: str = "Singapore") -> dict:
+    """Scrape Burpple search snippet (sync, runs in thread)."""
     result = {
         "source": "burpple",
         "scrape_found": False,
@@ -25,18 +29,18 @@ async def _scrape_burpple(name: str, location: str = "Singapore") -> dict:
         "detail": None,
     }
     try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
-            await page.set_extra_http_headers({"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"})
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.set_extra_http_headers({"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"})
 
             query = f"{name} {location}"
             url = f"https://www.burpple.com/search/food?q={query.replace(' ', '+')}"
-            await page.goto(url, timeout=TIMEOUT_MS, wait_until="domcontentloaded")
-            await page.wait_for_timeout(2000)
+            page.goto(url, timeout=TIMEOUT_MS, wait_until="domcontentloaded")
+            page.wait_for_timeout(2000)
 
-            content = await page.content()
-            await browser.close()
+            content = page.content()
+            browser.close()
 
         # Check for closed badge
         closed_patterns = [r"permanently\s+closed", r"closed\s+down", r"no\s+longer\s+operating"]
@@ -75,8 +79,8 @@ async def _scrape_burpple(name: str, location: str = "Singapore") -> dict:
     return result
 
 
-async def _scrape_hungrygowhere(name: str, location: str = "Singapore") -> dict:
-    """Scrape HungryGoWhere search snippet."""
+def _scrape_hungrygowhere_sync(name: str, location: str = "Singapore") -> dict:
+    """Scrape HungryGoWhere search snippet (sync, runs in thread)."""
     result = {
         "source": "hungrygowhere",
         "scrape_found": False,
@@ -85,18 +89,18 @@ async def _scrape_hungrygowhere(name: str, location: str = "Singapore") -> dict:
         "detail": None,
     }
     try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
-            await page.set_extra_http_headers({"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"})
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.set_extra_http_headers({"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"})
 
             query = f"{name} {location}"
             url = f"https://www.hungrygowhere.com/search/?query={query.replace(' ', '+')}"
-            await page.goto(url, timeout=TIMEOUT_MS, wait_until="domcontentloaded")
-            await page.wait_for_timeout(2000)
+            page.goto(url, timeout=TIMEOUT_MS, wait_until="domcontentloaded")
+            page.wait_for_timeout(2000)
 
-            content = await page.content()
-            await browser.close()
+            content = page.content()
+            browser.close()
 
         # Closed signal
         if re.search(r"permanently\s+closed|no\s+longer|closed\s+down", content, re.IGNORECASE):
@@ -130,20 +134,27 @@ async def _scrape_hungrygowhere(name: str, location: str = "Singapore") -> dict:
 
 async def check_food_platforms(name: str, location: str = "Singapore") -> dict:
     """
-    Run Burpple + HungryGoWhere in parallel.
-    Returns combined signal dict.
+    Run Burpple + HungryGoWhere in parallel threads.
+    Uses sync Playwright in a thread pool to avoid Windows asyncio subprocess issues.
     """
     try:
+        loop = asyncio.get_event_loop()
+        burpple_fut = loop.run_in_executor(
+            _executor, _scrape_burpple_sync, name, location
+        )
+        hgw_fut = loop.run_in_executor(
+            _executor, _scrape_hungrygowhere_sync, name, location
+        )
         burpple, hgw = await asyncio.gather(
-            _scrape_burpple(name, location),
-            _scrape_hungrygowhere(name, location),
-            return_exceptions=True
+            burpple_fut, hgw_fut, return_exceptions=True
         )
 
         # Handle exceptions from gather
         if isinstance(burpple, Exception):
+            logger.error("Burpple scrape failed: %s", burpple)
             burpple = {"source": "burpple", "scrape_found": False, "last_activity_date": None, "closed_signal": False, "detail": str(burpple)}
         if isinstance(hgw, Exception):
+            logger.error("HungryGoWhere scrape failed: %s", hgw)
             hgw = {"source": "hungrygowhere", "scrape_found": False, "last_activity_date": None, "closed_signal": False, "detail": str(hgw)}
 
         # Determine combined signal

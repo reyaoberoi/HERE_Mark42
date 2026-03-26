@@ -46,8 +46,8 @@ SIGNAL_VOTE: dict[str, float] = {
     "unknown":  0.0,
 }
 
-ACCEPT_THRESHOLD =  0.35
-REJECT_THRESHOLD = -0.35
+ACCEPT_THRESHOLD =  0.25
+REJECT_THRESHOLD = -0.25
 
 
 @dataclass
@@ -71,15 +71,6 @@ class ScorerResult:
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────
-
-def _normalised_weight(source: str, effective_confidence: float) -> float:
-    """
-    Returns the base weight for a source scaled by the source's confidence.
-    Sources that return 'unknown' still consume their base weight slot
-    but do not contribute a vote (vote == 0).
-    """
-    return WEIGHTS.get(source, 0.0) * effective_confidence
-
 
 def _build_narrative(
     weighted_score: float,
@@ -120,15 +111,14 @@ def compute_score(sources: list[SourceInput]) -> ScorerResult:
     """
     Fuse signals from one or more SourceInput objects into a single verdict.
 
-    Handles:
-    - Missing sources gracefully (treated as unknown, weight redistributed)
-    - Conflicting signals (active vs closed) → REVIEW
-    - Low total evidence (all unknown) → REVIEW with low confidence
+    Key behaviours:
+    - Weight redistribution: sources with unknown signal AND confidence <= 0.2
+      (errors, no data) are excluded; their weight is redistributed to sources
+      that actually produced a signal.
+    - Signal agreement bonus: if >=2 sources agree on active/closed, confidence
+      gets a 10% boost.
     - Wikidata-dissolved veto: if gov_data is 'closed' with high confidence
-      it acts as a hard floor pushing the score toward REJECT regardless of
-      other signals.
-
-    Returns a ScorerResult.
+      it acts as a hard floor pushing the score toward REJECT.
     """
     source_map: dict[str, SourceInput] = {s.source: s for s in sources}
 
@@ -140,28 +130,56 @@ def compute_score(sources: list[SourceInput]) -> ScorerResult:
         and gov.confidence >= 0.85
     )
 
-    weighted_sum = 0.0
-    total_effective_weight = 0.0
-    breakdown: list[dict] = []
+    # ── Classify sources into voting vs excluded ───────────────────────────
+    # Excluded: unknown signal with very low confidence (errors, no data)
+    LOW_CONF_THRESHOLD = 0.45
+    voting_sources: list[SourceInput] = []
+    excluded_sources: list[str] = []
     unknown_sources: list[str] = []
 
-    for source_name, base_weight in WEIGHTS.items():
+    for source_name in WEIGHTS:
         src = source_map.get(source_name)
-
         if src is None:
-            # Source not provided — treated as unknown, skip contribution
+            excluded_sources.append(source_name)
             unknown_sources.append(source_name)
             continue
 
+        if src.signal == "unknown" and src.confidence <= LOW_CONF_THRESHOLD:
+            # This source errored out or has no useful data — exclude it
+            excluded_sources.append(source_name)
+            unknown_sources.append(source_name)
+        else:
+            voting_sources.append(src)
+            if src.signal == "unknown":
+                unknown_sources.append(source_name)
+
+    # ── Redistribute weight from excluded sources ─────────────────────────
+    total_excluded_weight = sum(WEIGHTS.get(s, 0) for s in excluded_sources)
+    total_voting_base_weight = sum(WEIGHTS.get(s.source, 0) for s in voting_sources)
+
+    # Redistribution factor: scale up voting sources' weights proportionally
+    if total_voting_base_weight > 0:
+        redistribution_factor = 1.0 + (total_excluded_weight / total_voting_base_weight)
+    else:
+        redistribution_factor = 1.0
+
+    # ── Compute weighted score ────────────────────────────────────────────
+    weighted_sum = 0.0
+    total_effective_weight = 0.0
+    breakdown: list[dict] = []
+
+    for src in voting_sources:
         vote = SIGNAL_VOTE.get(src.signal, 0.0)
         effective_confidence = max(0.0, min(1.0, src.confidence))
-        effective_weight = base_weight * effective_confidence
+        base_weight = WEIGHTS.get(src.source, 0.0)
+        # Redistributed weight × confidence
+        effective_weight = base_weight * redistribution_factor * effective_confidence
 
         weighted_sum += vote * effective_weight
         total_effective_weight += effective_weight
 
         breakdown.append({
-            "source": source_name,
+            "source": src.source,
             "signal": src.signal,
             "vote": vote,
             "source_confidence": effective_confidence,
@@ -170,25 +188,66 @@ def compute_score(sources: list[SourceInput]) -> ScorerResult:
             "detail": src.detail,
         })
 
-        if src.signal == "unknown":
-            unknown_sources.append(source_name)
+    # Also add excluded sources to breakdown for transparency
+    for source_name in excluded_sources:
+        src = source_map.get(source_name)
+        if src is not None:
+            breakdown.append({
+                "source": source_name,
+                "signal": src.signal,
+                "vote": 0.0,
+                "source_confidence": src.confidence,
+                "base_weight": WEIGHTS.get(source_name, 0.0),
+                "effective_weight": 0.0,
+                "detail": f"[excluded — low confidence] {src.detail}",
+            })
 
-    # Normalise score to [-1, +1] relative to maximum possible weight
-    max_possible_weight = sum(WEIGHTS[s] for s in source_map)
-    if max_possible_weight > 0:
-        weighted_score = weighted_sum / max_possible_weight
+    # Normalise score to [-1, +1]
+    if total_effective_weight > 0:
+        weighted_score = weighted_sum / total_effective_weight
     else:
         weighted_score = 0.0
 
-    # Confidence = fraction of weight that produced a non-unknown signal
-    non_unknown_weight = sum(
-        WEIGHTS[s.source] * s.confidence
-        for s in sources
-        if s.signal != "unknown"
-    )
-    confidence = round(
-        non_unknown_weight / sum(WEIGHTS.values()), 3
-    )
+    # ── Signal agreement bonus ────────────────────────────────────────────
+    active_count = sum(1 for s in voting_sources if s.signal == "active")
+    closed_count = sum(1 for s in voting_sources if s.signal == "closed")
+    agreement_bonus = 0.0
+    if active_count >= 2 or closed_count >= 2:
+        agreement_bonus = 0.10
+
+    # ── Confidence calculation ────────────────────────────────────────────
+    # Weighted average of voting sources' confidences, scaled by coverage
+    if voting_sources:
+        voting_conf_sum = sum(
+            WEIGHTS.get(s.source, 0) * s.confidence
+            for s in voting_sources
+            if s.signal != "unknown"
+        )
+        max_possible_weight = sum(WEIGHTS.values())
+        coverage_ratio = total_voting_base_weight / max_possible_weight if max_possible_weight > 0 else 0
+
+        # Weighted average of confidence from sources that actually voted
+        if total_voting_base_weight > 0:
+            avg_conf = voting_conf_sum / total_voting_base_weight
+        else:
+            avg_conf = 0.0
+
+        # Tiered coverage penalty
+        if coverage_ratio >= 0.6:
+            coverage_penalty = 1.0
+        elif coverage_ratio >= 0.3:
+            coverage_penalty = 0.8
+        else:
+            coverage_penalty = 0.6
+
+        raw_confidence = (avg_conf * coverage_penalty) + agreement_bonus
+        confidence = round(min(1.0, raw_confidence), 3)
+
+        # Floor: if any source voted with real data, confidence >= 15%
+        has_real_signal = any(s.signal != "unknown" for s in voting_sources)
+        confidence = max(0.15 if has_real_signal else 0.05, confidence)
+    else:
+        confidence = 0.0
 
     # Wikidata veto: force toward REJECT
     if wikidata_veto:
@@ -203,14 +262,14 @@ def compute_score(sources: list[SourceInput]) -> ScorerResult:
         recommendation = "REVIEW"
 
     # Edge case: very low confidence overall → escalate to REVIEW
-    if confidence < 0.15 and recommendation != "REJECT":
+    if confidence < 0.10 and recommendation != "REJECT":
         recommendation = "REVIEW"
 
     narrative = _build_narrative(
         round(weighted_score, 4),
         recommendation,
         breakdown,
-        [s for s in unknown_sources if s in WEIGHTS],  # only real sources
+        [s for s in unknown_sources if s in WEIGHTS],
     )
 
     return ScorerResult(

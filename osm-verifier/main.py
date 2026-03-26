@@ -16,6 +16,7 @@ Run with:
 
 import os
 import asyncio
+import httpx
 import psycopg2
 from fastapi import FastAPI
 from dotenv import load_dotenv
@@ -97,23 +98,30 @@ async def search(q: str):
     candidates = []
 
     # ── 1. Local Search (PostGIS) ───────────────────────────────────────────
+    # Singapore bounding box filter
+    SG_MIN_LAT, SG_MAX_LAT = 1.1304, 1.4784
+    SG_MIN_LON, SG_MAX_LON = 103.6065, 104.0860
+
     try:
         conn = psycopg2.connect(os.getenv("DATABASE_URL"))
         with conn.cursor() as cur:
-            # Simple ILIKE and trigram similarity search
+            # Fuzzy search filtered to Singapore bbox only
             query = """
                 SELECT osm_id, name, ST_Y(geom) as lat, ST_X(geom) as lon, all_tags
                 FROM (
                     SELECT osm_id, name, geom, 
                            (to_jsonb(t.*) - 'osm_id' - 'name' - 'geom') as all_tags
                     FROM raw_osm_data t
+                    WHERE ST_Y(geom) BETWEEN %s AND %s
+                      AND ST_X(geom) BETWEEN %s AND %s
                 ) sub
                 WHERE name ILIKE %s 
                 OR name %% %s
                 ORDER BY similarity(name, %s) DESC
                 LIMIT 10
             """
-            cur.execute(query, (f"%{q}%", q, q))
+            cur.execute(query, (SG_MIN_LAT, SG_MAX_LAT, SG_MIN_LON, SG_MAX_LON,
+                                f"%{q}%", q, q))
             rows = cur.fetchall()
             for r in rows:
                 candidates.append({
@@ -201,9 +209,28 @@ async def verify(req: VerifyRequest):
     food_raw  = _safe(food_raw,   "food_platforms")
     social_raw = _safe(social_raw, "social_signal")
 
-    #2. Stats signal
+    #2. Stats signal — try geo meta first, fallback to direct OSM node lookup
     stats_cache = load_stats()
     edit_age = geo_raw.get("meta", {}).get("edit_age_days") if isinstance(geo_raw.get("meta"), dict) else None
+
+    # If geo didn't provide edit age, try direct OSM node lookup
+    if edit_age is None and req.osm_node_id:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                osm_resp = await client.get(
+                    f"https://api.openstreetmap.org/api/0.6/node/{req.osm_node_id}.json",
+                    headers={"User-Agent": "osm-verifier/1.0"}
+                )
+                if osm_resp.status_code == 200:
+                    node_data = osm_resp.json().get("elements", [{}])[0]
+                    timestamp = node_data.get("timestamp")
+                    if timestamp:
+                        from datetime import datetime, timezone
+                        edited_at = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                        edit_age = (datetime.now(timezone.utc) - edited_at).days
+                        logger.info(f"Direct OSM lookup: node {req.osm_node_id} last edited {edit_age} days ago")
+        except Exception as e:
+            logger.warning(f"Direct OSM node lookup failed: {e}")
 
     if edit_age is not None:
         stats_raw = get_staleness_signal(edit_age, tag_type, stats_cache)
@@ -211,8 +238,8 @@ async def verify(req: VerifyRequest):
         stats_raw = {
             "source": "stats",
             "signal": "unknown",
-            "confidence": 0.3,
-            "detail": "No edit age available from geo signal",
+            "confidence": 0.1,
+            "detail": "No edit age available",
         }
 
     #3. Neighbourhood density

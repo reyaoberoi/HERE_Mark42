@@ -135,13 +135,15 @@ async def check_social_signal(name: str) -> dict:
         # Determine signal
         if closure_mentioned:
             signal = "closed"
-            confidence = 0.65
-        elif recency_score >= 0.5:
+            confidence = 0.70
+        elif recency_score >= 0.3:
             signal = "active"
-            confidence = recency_score * 0.7
+            # Base confidence from recency, boosted by volume of posts
+            volume_boost = min(0.15, len(reddit_posts) * 0.015)
+            confidence = min(0.95, recency_score * 0.7 + volume_boost)
         elif reddit_posts:
-            signal = "unknown"
-            confidence = 0.3
+            signal = "active"  # Any posts at all = weak active signal
+            confidence = 0.35
         else:
             signal = "unknown"
             confidence = 0.1
@@ -153,6 +155,9 @@ async def check_social_signal(name: str) -> dict:
             detail_parts.append("closure language detected")
         if ddg["ddg_found"]:
             detail_parts.append("DDG social presence found")
+            # DDG presence boosts confidence by 5%
+            if signal == "active":
+                confidence = min(0.95, confidence + 0.05)
 
         return {
             "source": "social_signal",

@@ -104,7 +104,7 @@ async def geocode_nominatim(name: str, postal_code: str = "") -> Optional[tuple]
 # 4. Overpass — find OSM nodes within 100m
 # ─────────────────────────────────────────
 
-async def query_overpass_nearby(lat: float, lon: float, radius: int = 100) -> list:
+async def query_overpass_nearby(lat: float, lon: float, radius: int = 300) -> list:
     query = f"""
     [out:json][timeout:10];
     (
@@ -174,14 +174,17 @@ async def get_geo_signal(name: str, lat: float, lon: float, postal_code: str = "
             "detail": "Coordinates outside Singapore bbox"
         }
 
-    nodes = await query_overpass_nearby(lat, lon)
+    # Progressive widening: try 300m first, then 500m
+    nodes = await query_overpass_nearby(lat, lon, radius=300)
+    if not nodes:
+        nodes = await query_overpass_nearby(lat, lon, radius=500)
 
     if not nodes:
         return {
             "source": "geo",
             "signal": "unknown",
-            "confidence": 0.3,
-            "detail": "No OSM nodes found within 100m"
+            "confidence": 0.2,
+            "detail": "No OSM nodes found within 500m"
         }
 
     # Find the best matching node by name tag
