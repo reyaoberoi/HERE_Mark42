@@ -75,31 +75,46 @@ def setup_extensions(conn):
     conn.commit()
 
 def load_data_via_docker():
-    print(f"Loading data from {GPKG_FILENAME} via Docker (ghcr.io/osgeo/gdal)...")
+    print(f"Loading Singapore POIs from {GPKG_FILENAME} via Docker (ghcr.io/osgeo/gdal)...")
     
-    # GDAL images moved to GHCR: https://github.com/OSGeo/gdal/pkgs/container/gdal
+    # Singapore BBox: 103.6 1.1 104.1 1.5
     image = "ghcr.io/osgeo/gdal:ubuntu-small-latest"
     
-    cmd = [
-        "docker", "run", "--rm",
-        "--network", NETWORK_NAME,
-        "-v", f"{DATA_DIR_PATH}:/data",
-        image,
-        "ogr2ogr",
-        "-f", "PostgreSQL",
-        f"PG:dbname={DB_NAME} user={DB_USER} password={DB_PASS} host={DB_CONTAINER_HOST} port=5432",
-        f"/data/{GPKG_FILENAME}",
-        "-nln", "raw_osm_data",
-        "-overwrite",
-        "-progress"
-    ]
+    # We load gis_osm_pois_free layer which contains point POIs
+    # and gis_osm_pois_a_free which contains area POIs (like malls/large shops)
     
-    print(f"Running: {' '.join(cmd)}")
-    try:
+    def run_ogr(layer, append=False):
+        mode = "-append" if append else "-overwrite"
+        cmd = [
+            "docker", "run", "--rm",
+            "--network", NETWORK_NAME,
+            "-v", f"{DATA_DIR_PATH}:/data",
+            image,
+            "ogr2ogr",
+            "-f", "PostgreSQL",
+            f"PG:dbname={DB_NAME} user={DB_USER} password={DB_PASS} host={DB_CONTAINER_HOST} port=5432",
+            f"/data/{GPKG_FILENAME}",
+            layer,
+            "-nln", "raw_osm_data",
+            "-spat", "103.6", "1.1", "104.1", "1.5",
+            mode,
+            "-progress"
+        ]
+        print(f"Running: {' '.join(cmd)}")
         subprocess.run(cmd, check=True)
-        print("Data loaded successfully.")
+
+    try:
+        # Pass 1: Points
+        print(">>> Pass 1: Loading point POIs...")
+        run_ogr("gis_osm_pois_free", append=False)
+        
+        # Pass 2: Polygons (Append to same table)
+        print(">>> Pass 2: Appending area POIs...")
+        run_ogr("gis_osm_pois_a_free", append=True)
+        
+        print("Data loaded successfully with Singapore filter (Points + Areas).")
         return True
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         print(f"Error loading data: {e}")
         return False
 
