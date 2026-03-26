@@ -27,11 +27,20 @@ from app.sources.gov_data import check_gov_data
 from app.sources.food_platforms import check_food_platforms
 from app.sources.social_signals import check_social_signal
 from app.scorer.weighted_scorer import compute_score, source_input_from_dict
+import logging
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 
 load_dotenv()
+
+# ── Logging ─────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    force=True
+)
+logger = logging.getLogger("api")
 
 app = FastAPI(title="OSM Verifier API")
 
@@ -82,30 +91,70 @@ def health():
 @app.get("/search")
 async def search(q: str):
     """
-    Geocode a query string and find nearby OSM candidates.
+    Search for POIs. Tries local PostGIS first (fuzzy), then falls back to Nominatim/Overpass.
     """
-    coords = await geocode_nominatim(q)
-    if not coords:
-        return {"error": "Could not find coordinates for query", "candidates": []}
-    
-    lat, lon = coords
-    nodes = await query_overpass_nearby(lat, lon, radius=200)
-    
+    logger.info(f"Searching for: {q}")
     candidates = []
-    for node in nodes:
-        tags = node.get("tags", {})
-        candidates.append({
-            "osm_node_id": str(node.get("id")),
-            "name": tags.get("name", "Unknown"),
-            "lat": node.get("lat"),
-            "lon": node.get("lon"),
-            "tags": tags
-        })
-    
+
+    # ── 1. Local Search (PostGIS) ───────────────────────────────────────────
+    try:
+        conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+        with conn.cursor() as cur:
+            # Simple ILIKE and trigram similarity search
+            query = """
+                SELECT osm_id, name, ST_Y(geom) as lat, ST_X(geom) as lon, all_tags
+                FROM (
+                    SELECT osm_id, name, geom, 
+                           (to_jsonb(t.*) - 'osm_id' - 'name' - 'geom') as all_tags
+                    FROM raw_osm_data t
+                ) sub
+                WHERE name ILIKE %s 
+                OR name %% %s
+                ORDER BY similarity(name, %s) DESC
+                LIMIT 10
+            """
+            cur.execute(query, (f"%{q}%", q, q))
+            rows = cur.fetchall()
+            for r in rows:
+                candidates.append({
+                    "osm_node_id": str(r[0]),
+                    "name": r[1],
+                    "lat": r[2],
+                    "lon": r[3],
+                    "tags": r[4] or {}
+                })
+        conn.close()
+        logger.info(f"Local search found {len(candidates)} candidates")
+    except Exception as e:
+        logger.error(f"Local search failed: {e}")
+
+    # ── 2. Fallback to Nominatim/Overpass if few local results ──────────────
+    if len(candidates) < 3:
+        logger.info("Fewer than 3 local results. Trying external OSM search (Nominatim/Overpass)...")
+        coords = await geocode_nominatim(q)
+        if coords:
+            lat, lon = coords
+            nodes = await query_overpass_nearby(lat, lon, radius=500)
+            for node in nodes:
+                node_id = str(node.get("id"))
+                # Avoid duplicates
+                if not any(c["osm_node_id"] == node_id for c in candidates):
+                    tags = node.get("tags", {})
+                    candidates.append({
+                        "osm_node_id": node_id,
+                        "name": tags.get("name", "Unknown"),
+                        "lat": node.get("lat"),
+                        "lon": node.get("lon"),
+                        "tags": tags
+                    })
+            logger.info(f"External search added {len(candidates)} candidates total")
+
+    if not candidates:
+        return {"error": f"No candidates found for '{q}'", "candidates": []}
+
     return {
         "query": q,
-        "lat": lat,
-        "lon": lon,
+        "count": len(candidates),
         "candidates": candidates
     }
 
@@ -124,6 +173,8 @@ async def verify(req: VerifyRequest):
     )
 
     #1. Run geo + three external sources concurrently
+    logger.info(f"Initiating verification for node {req.osm_node_id} ({req.name})")
+    
     geo_raw, gov_raw, food_raw, social_raw = await asyncio.gather(
         get_geo_signal(name=req.name, lat=req.lat, lon=req.lon, postal_code=postal_code),
         check_gov_data(req.name, postal_code),
@@ -135,12 +186,14 @@ async def verify(req: VerifyRequest):
     def _safe(result, source_name: str, fallback_signal: str = "unknown") -> dict:
         """Normalise exceptions to a graceful unknown-signal dict."""
         if isinstance(result, Exception):
+            logger.error(f"Source {source_name} failed: {result}")
             return {
                 "source": source_name,
                 "signal": fallback_signal,
                 "confidence": 0.0,
                 "detail": f"Source error: {result}",
             }
+        logger.info(f"Source {source_name} completed with signal: {result.get('signal')}")
         return result
 
     geo_raw   = _safe(geo_raw,    "geo")
