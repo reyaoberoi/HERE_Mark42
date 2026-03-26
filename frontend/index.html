@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pipeline Tester</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 800px; margin: auto; }
+        input { width: 70%; padding: 10px; }
+        button { padding: 10px 20px; cursor: pointer; }
+        #results { margin-top: 20px; background: #f4f4f4; padding: 15px; border-radius: 5px; white-space: pre-wrap; font-family: monospace; }
+        .candidate { border: 1px solid #ccc; padding: 10px; margin: 10px 0; border-radius: 5px; cursor: pointer; transition: background 0.2s; }
+        .candidate:hover { background: #eef; }
+        .header { display: flex; align-items: center; justify-content: space-between; }
+        .status { font-size: 0.8em; color: green; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>POI Pipeline Tester</h1>
+        <span class="status">Connected to Backend</span>
+    </div>
+    <p>Search for a POI name to find OSM nodes and verify them.</p>
+    
+    <input type="text" id="query" placeholder="e.g. Maxwell Food Centre" onkeypress="if(event.key==='Enter') search()">
+    <button onclick="search()">Search Nodes</button>
+
+    <div id="candidates"></div>
+    <div id="results">No results yet.</div>
+
+    <script>
+        const API_BASE = '';
+
+        async function search() {
+            const q = document.getElementById('query').value;
+            if (!q) return;
+
+            const resDiv = document.getElementById('results');
+            const candDiv = document.getElementById('candidates');
+            resDiv.innerText = 'Searching Coordinates & Nodes...';
+            candDiv.innerHTML = '';
+
+            try {
+                const response = await fetch(`${API_BASE}/search?q=${encodeURIComponent(q)}`);
+                const data = await response.json();
+                
+                if (data.error) {
+                    resDiv.innerText = data.error;
+                    return;
+                }
+
+                resDiv.innerText = `Search for "${q}" returned ${data.candidates.length} candidate nodes near lat: ${data.lat.toFixed(4)}, lon: ${data.lon.toFixed(4)}. Click a candidate to trigger the full pipeline.`;
+                
+                data.candidates.forEach(c => {
+                    const div = document.createElement('div');
+                    div.className = 'candidate';
+                    div.innerHTML = `<strong>${c.name}</strong> (ID: ${c.osm_node_id})<br><small>${JSON.stringify(c.tags)}</small>`;
+                    div.onclick = () => verify(c);
+                    candDiv.appendChild(div);
+                });
+
+                if (data.candidates.length === 0) {
+                    resDiv.innerText += " No OSM nodes found nearby.";
+                }
+
+            } catch (err) {
+                resDiv.style.color = 'red';
+                resDiv.innerText = 'Search Error: ' + err.message;
+            }
+        }
+
+        async function verify(candidate) {
+            const resDiv = document.getElementById('results');
+            const candDiv = document.getElementById('candidates');
+            
+            // Highlight selected
+            const candidates = document.querySelectorAll('.candidate');
+            candidates.forEach(el => el.style.background = 'white');
+            event.currentTarget.style.background = '#dcfce7'; // green-ish highlight
+
+            resDiv.style.color = 'black';
+            resDiv.innerText = `Running Pipeline for ${candidate.name} (ID: ${candidate.osm_node_id})...`;
+
+            try {
+                const response = await fetch(`${API_BASE}/verify`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        osm_node_id: candidate.osm_node_id,
+                        lat: candidate.lat,
+                        lon: candidate.lon,
+                        name: candidate.name,
+                        tags: candidate.tags
+                    })
+                });
+                const data = await response.json();
+                
+                // Formatted output
+                let out = `VERIFICATION RESULT\n`;
+                out += `====================\n`;
+                out += `Confidence: ${(data.confidence * 100).toFixed(1)}%\n`;
+                out += `Recommendation: ${data.recommendation}\n`;
+                out += `Narrative: ${data.narrative}\n\n`;
+                out += `Signals:\n`;
+                data.sources.forEach(s => {
+                    out += `- [${s.source.toUpperCase()}] ${s.signal.toUpperCase()} (conf: ${s.confidence.toFixed(2)}) - ${s.detail}\n`;
+                });
+                
+                resDiv.innerText = out;
+            } catch (err) {
+                resDiv.style.color = 'red';
+                resDiv.innerText = 'Verification Error: ' + err.message;
+            }
+        }
+    </script>
+</body>
+</html>
