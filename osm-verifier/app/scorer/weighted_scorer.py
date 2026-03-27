@@ -123,14 +123,25 @@ def compute_score(
     mapillary_conf = _clamp(float((source_map.get("mapillary") or {}).get("confidence", 0.0) or 0.0), 0.0, 1.0)
     strong_mapillary_closed = mapillary_status == "CLOSED" and mapillary_conf >= 0.60
 
+    non_osm_active = [s for s in active_sources if s != "osm_geo"]
+    non_osm_closed = [s for s in closure_sources if s != "osm_geo"]
+
     conflict_flag = bool(active_high and closed_high)
     if conflict_flag:
         posterior = 0.5 + (posterior - 0.5) * 0.45
 
+    # OSM-only ACTIVE should not be enough to classify a place as confidently open.
+    if geo.get("osm_found") and not non_osm_active and not non_osm_closed:
+        posterior = min(posterior, 0.64)
+
+    # If web/visual sources indicate closure and no non-OSM active source supports reopening,
+    # bias away from OPEN even if OSM tags are stale.
+    if non_osm_closed and not non_osm_active:
+        posterior = min(posterior, 0.40)
+
     # Strong visual closure from Mapillary should not collapse to "uncertain"
     # when only stale OSM tags still claim the place is active.
     if strong_mapillary_closed and geo.get("osm_found"):
-        non_osm_active = [s for s in active_sources if s != "osm_geo"]
         if not non_osm_active:
             posterior = min(posterior, 0.24)
 
@@ -149,18 +160,17 @@ def compute_score(
     else:
         recommendation = "REVIEW"
 
-    if not geo.get("osm_found") and p_active >= 0.55:
-        predicted_status = "New Place"
-    elif p_closed >= 0.62:
-        predicted_status = "Recently Closed"
-    elif p_active >= 0.72:
-        predicted_status = "Established"
+    # Predicted status is derived from model decision, not place-specific rules.
+    if recommendation == "REJECT":
+        predicted_status = "Closed"
+    elif recommendation == "ACCEPT":
+        predicted_status = "Open"
     else:
-        predicted_status = "Uncertain"
+        predicted_status = "Review"
 
     contradiction_flag = bool(
         geo.get("osm_found")
-        and predicted_status == "Recently Closed"
+        and predicted_status == "Closed"
         and recommendation == "REJECT"
         and not conflict_flag
     )

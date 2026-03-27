@@ -233,14 +233,26 @@
         const r = await fetch(`${API}/contradictions`);
         if (!r.ok) return;
         const d = await r.json();
+        
         const latest = (d.items || []).slice(0, 5).map((x) => ({
           place_name: x.place_name,
           recommendation: x.recommendation,
           confidence: x.confidence,
           created_at: x.created_at,
         }));
+        
         if (latest.length) {
-          resultMetaEl.textContent += `\n\nLatest contradictions:\n${JSON.stringify(latest, null, 2)}`;
+          const contradictionInfo = {
+            "=== LIVE CONTRADICTIONS (from live_contradictions.json) ===": null,
+            "count": d.count,
+            "storage_file": d.storage_info?.file_path || "osm-verifier/contradictions/live_contradictions.json",
+            "database_type": d.storage_info?.database_type || "JSON file (not SQL)",
+            "important": "These track places where strong evidence (e.g., Mapillary CLOSED images) contradicts OSM (which marks them ACTIVE)",
+            "latest_5_contradictions": latest,
+            "how_it_works": d.how_contradictions_work || null,
+            "note": "Query different places to update this list dynamically!"
+          };
+          resultMetaEl.textContent += `\n\n${JSON.stringify(contradictionInfo, null, 2)}`;
         }
       } catch {}
     }
@@ -333,18 +345,46 @@
         confidence: s.confidence,
         detail: s.detail
       }));
-      resultMetaEl.textContent = JSON.stringify({
-        confidence: data.confidence,
-        recommendation: data.recommendation,
-        predicted_status: data.predicted_status,
-        matched_source_count: data.matched_source_count,
-        matched_sources: matched,
-        confidence_formula: data.confidence_formula,
-        contradiction_flag: data.contradiction_flag,
-        contradiction_recorded: data.contradiction_recorded,
-        mapillary_change: data.change_class,
-        mapillary_detail: (data.sources || []).find((s) => s.source === "mapillary")?.detail || null
-      }, null, 2);
+      
+      const fullResult = {
+        "=== CORE PREDICTION ===": null,
+        "place_name": data.place_name,
+        "predicted_status": data.predicted_status,
+        "recommendation": data.recommendation,
+        "confidence": `${data.confidence}%`,
+        "osm_found": data.osm_found,
+        "osm_id": data.osm_id || "N/A",
+        "location": `[${Number(data.lat).toFixed(6)}, ${Number(data.lon).toFixed(6)}]`,
+        
+        "=== SOURCE EVIDENCE ===": null,
+        "matched_source_count": data.matched_source_count,
+        "matched_sources": matched,
+        "considered_sources": data.considered_sources || [],
+        "active_sources": data.active_sources || [],
+        "closure_sources": data.closure_sources || [],
+        
+        "=== MODEL INTERNALS ===": null,
+        "confidence_formula": data.confidence_formula,
+        "conflict_flag": data.conflict_flag || false,
+        "contradiction_flag": data.contradiction_flag || false,
+        "contradiction_recorded": data.contradiction_recorded || false,
+        
+        "=== MAPILLARY VISUAL SIGNAL ===": null,
+        "visual_delta_score": data.visual_delta_score ?? "N/A",
+        "change_class": data.change_class || "N/A",
+        "mapillary_before_date": data.mapillary_before_date || "N/A",
+        "mapillary_after_date": data.mapillary_after_date || "N/A",
+        
+        "=== STALENESS & FRESHNESS ===": null,
+        "edit_age_days": data.edit_age_days ?? "N/A",
+        "neighbourhood_activity_score": data.neighbourhood_activity_score ?? "N/A",
+        "prior_p_active": data.prior_p_active ?? "N/A",
+        
+        "=== NARRATIVE ===": null,
+        "narrative": data.narrative || "N/A",
+      };
+      
+      resultMetaEl.textContent = JSON.stringify(fullResult, null, 2);
       await loadContradictions();
 
       if (Number.isFinite(data.lat) && Number.isFinite(data.lon)) {

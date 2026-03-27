@@ -32,7 +32,7 @@ from app.osm.changeset import submit_osm_changeset
 
 HEATMAP_CACHE = []
 CACHE_DB_PATH = str(Path(__file__).resolve().with_name("cache.db"))
-CACHE_SCHEMA_VERSION = 6
+CACHE_SCHEMA_VERSION = 8
 CONTRADICTIONS_DIR = Path(__file__).resolve().with_name("contradictions")
 CONTRADICTIONS_PATH = CONTRADICTIONS_DIR / "live_contradictions.json"
 load_dotenv(Path(__file__).resolve().with_name(".env"))
@@ -191,9 +191,108 @@ async def health():
 
 @app.get("/contradictions")
 async def contradictions():
+    records = _read_contradictions()
     return {
-        "count": len(_read_contradictions()),
-        "items": _read_contradictions(),
+        "count": len(records),
+        "items": records,
+        "storage_info": {
+            "file_path": str(CONTRADICTIONS_PATH),
+            "max_records": 500,
+            "file_based_storage": True,
+            "database_type": "JSON file (not SQL)",
+            "last_updated": records[0].get("created_at") if records else None,
+        },
+        "how_contradictions_work": {
+            "definition": "A contradiction occurs when we find strong evidence (e.g., Mapillary images) showing a place has CLOSED, but OSM still marks it as ACTIVE",
+            "criteria_for_logging": [
+                "Place must be found in OSM (osm_found = true)",
+                "Predicted status must be 'Recently Closed' (p_closed >= 0.62)",
+                "Recommendation must be 'REJECT' (high confidence closure)",
+                "No conflict between active and closed signals (conflict_flag = false)"
+            ],
+            "dynamic_behavior": "Contradictions update when YOU query different places. If a place meets all criteria above, it will be added to live_contradictions.json and appear here.",
+            "why_only_some_places_show_up": "Most places don't have strong enough closure signals (like Mapillary CLOSED evidence). They stay in 'REVIEW' status instead of 'REJECT'. Only places with high-confidence closure evidence appear here.",
+            "example": "Burger & Lobster has Mapillary CLOSED evidence (2017→2019 visual change) + OSM marked ACTIVE = Contradiction logged",
+        },
+        "note": "Query different places to update this list. Only high-confidence contradictions are recorded."
+    }
+
+
+
+@app.get("/storage-info")
+async def storage_info():
+    """
+    Explain where all data is being stored and how the database changes.
+    This answers: 'Where in the database is it changing?'
+    """
+    return {
+        "title": "Data Storage Architecture",
+        "storage_layers": {
+            "layer_1_cache": {
+                "type": "SQLite Database",
+                "location": CACHE_DB_PATH,
+                "table_name": "verify_cache",
+                "purpose": "Cache verification results for 24 hours",
+                "fields": ["key (sha256 hash of name+address)", "result (JSON serialized VerifyResponse)", "created_at (timestamp)"],
+                "ttl_hours": 24,
+                "schema_version": CACHE_SCHEMA_VERSION,
+                "updates": "Every time you call /verify, result is cached here (if schema matches)",
+                "how_to_view": f"Open {CACHE_DB_PATH} with SQLite viewer"
+            },
+            "layer_2_contradictions": {
+                "type": "JSON File",
+                "location": str(CONTRADICTIONS_PATH),
+                "purpose": "Audit log of high-confidence contradictions discovered",
+                "format": "Array of objects (max 500 records, newest first)",
+                "fields": ["place_name", "osm_id", "predicted_status", "recommendation", "confidence", "matched_sources", "confidence_formula", "created_at", "dedupe_key"],
+                "updates": "Appended to ONLY when all these conditions are met: osm_found=true, predicted_status='Recently Closed', recommendation='REJECT', conflict_flag=false, not already present (dedupe)",
+                "deduplication": "Uses dedupe_key format: '{osm_id}|{place_name}|{predicted_status}'",
+                "example": "Burger & Lobster was added on 2026-03-27 because it has strong Mapillary CLOSED evidence",
+                "how_to_view": f"Read {CONTRADICTIONS_PATH} as JSON"
+            },
+            "layer_3_evaluation": {
+                "type": "JSON Files",
+                "location": "osm-verifier/evaluation/ directory",
+                "files": ["model_eval_latest.json (current)", "model_eval_YYYYMMDDTHHMMSSZ.json (timestamped)", "changeset_diffs_latest.jsonl (proposed OSM edits)"],
+                "purpose": "Model evaluation metrics against predefined test samples",
+                "note": "These are STATIC until you run 'python scripts/evaluate_model.py' manually. They do NOT update per query unless you regenerate them.",
+                "how_to_view": "Read evaluation/model_eval_latest.json as JSON"
+            },
+            "layer_4_heatmap": {
+                "type": "JSON File",
+                "location": "osm-verifier/heatmap.json",
+                "purpose": "Pre-computed staleness risk scores for all Singapore POIs",
+                "records": len(HEATMAP_CACHE),
+                "how_to_view": "Read heatmap.json as JSON"
+            }
+        },
+        "data_flow_on_verify": {
+            "step_1": "You call /verify with place name and address",
+            "step_2": "Backend computes 24-hour cache key (SHA256 hash)",
+            "step_3": "Check SQLite cache.db for cached result (if not expired, return cached)",
+            "step_4": "If not cached, run full pipeline: Tier1 (geo) → Tier2 (registry) → Tier3 (web/visual)",
+            "step_5": "Compute score and get all attributes (confidence, recommendation, sources, etc)",
+            "step_6": "Write to cache.db (SQLite) with current timestamp and schema version",
+            "step_7": "Check if result meets contradiction criteria (osm_found + Recently Closed + REJECT + no conflict)",
+            "step_8": "If all criteria met, append to live_contradictions.json (JSON file)",
+            "step_9": "Return VerifyResponse with all attributes to frontend"
+        },
+        "where_get_attributes_from": {
+            "confidence": "Derived from posterior probability (p_active, p_closed)",
+            "recommendation": "Determined by scoring logic (ACCEPT / REVIEW / REJECT)",
+            "predicted_status": "Set based on p_closed and p_active thresholds",
+            "matched_sources": "Filtered list of sources where status != UNKNOWN",
+            "matched_source_count": "Count of matched_sources",
+            "confidence_formula": "Text representation of p_active, p_closed calculation",
+            "contradiction_flag": "True if osm_found + Recently Closed + REJECT + not conflict",
+            "contradiction_recorded": "True if contradiction was successfully written to JSON file",
+            "edit_age_days": "Days since OSM last edit (from OSM metadata)",
+            "neighbourhood_activity_score": "Staleness context score (from heatmap computation)",
+            "prior_p_active": "Base prior probability of place being active (before observing signals)",
+            "visual_delta_score": "Mapillary visual similarity score",
+            "change_class": "Mapillary change classification (e.g., 'Major visual change')"
+        },
+        "important_note": "All data is DYNAMIC per query. SQLite cache lasts 24h. Contradictions JSON updates when you query places that meet ALL criteria. Model evaluation requires running evaluate_model.py script manually."
     }
 
 
@@ -440,6 +539,59 @@ async def verify(req: VerifyRequest):
 
     _cache_set(cache_key, result.model_dump())
     return result
+
+
+@app.post("/evaluate-live")
+async def evaluate_live(req: VerifyRequest):
+    """
+    Provide LIVE evaluation metrics for the current query.
+    Unlike /evaluate-model (which tests static samples), this evaluates the current result.
+    This endpoint should be called AFTER /verify to get real-time model performance metrics.
+    """
+    result = await verify(req)
+    
+    # Build evaluation record for this single place
+    eval_record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "place_name": req.name,
+        "address": req.address,
+        "lat": result.lat,
+        "lon": result.lon,
+        "osm_id": result.osm_id,
+        "osm_found": result.osm_found,
+        "predicted_status": result.predicted_status,
+        "recommendation": result.recommendation,
+        "confidence": result.confidence,
+        "matched_source_count": result.matched_source_count,
+        "matched_sources": [
+            {
+                "source": s.source,
+                "status": s.status,
+                "confidence": s.confidence,
+                "detail": s.detail
+            }
+            for s in result.matched_sources
+        ],
+        "confidence_formula": result.confidence_formula,
+        "contradiction_flag": result.contradiction_flag,
+        "contradiction_recorded": result.contradiction_recorded,
+        "is_contradiction": bool(result.contradiction_flag),
+        "pipeline_duration_ms": (
+            result.pipeline_steps[-1]["duration_ms"] 
+            if result.pipeline_steps else 0
+        ),
+    }
+    
+    # Add metadata about where this result is stored
+    eval_record["storage_info"] = {
+        "live_evaluation": "This evaluation is generated on-the-fly for the current query",
+        "cache_location": f"{CACHE_DB_PATH}",
+        "cache_ttl_hours": 24,
+        "contradictions_file": str(CONTRADICTIONS_PATH),
+        "note": "Results are cached in SQLite. Contradictions are logged to live_contradictions.json only when they meet specific criteria."
+    }
+    
+    return eval_record
 
 
 @app.get("/search")
