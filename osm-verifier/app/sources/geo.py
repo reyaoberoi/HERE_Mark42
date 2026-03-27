@@ -16,9 +16,6 @@ SG_BBOX = {
 
 DB_PATH = "cache.db"
 
-# ─────────────────────────────────────────
-# 1. SQLite cache setup
-# ─────────────────────────────────────────
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -51,9 +48,6 @@ async def save_coords(name: str, postal_code: str, lat: float, lon: float):
         """, (name, postal_code, lat, lon, datetime.now(timezone.utc).isoformat()))
         await db.commit()
 
-# ─────────────────────────────────────────
-# 2. SG bounding box validator
-# ─────────────────────────────────────────
 
 def is_in_singapore(lat: float, lon: float) -> bool:
     return (
@@ -61,9 +55,38 @@ def is_in_singapore(lat: float, lon: float) -> bool:
         SG_BBOX["min_lon"] <= lon <= SG_BBOX["max_lon"]
     )
 
-# ─────────────────────────────────────────
-# 3. Nominatim geocode
-# ─────────────────────────────────────────
+
+async def geocode_onemap(query: str) -> Optional[tuple]:
+    """
+    Singapore's official OneMap API: dramatically better at parsing SG addresses/postal codes.
+    """
+    url = "https://www.onemap.gov.sg/api/common/elastic/search"
+    params = {
+        "searchVal": query,
+        "returnGeom": "Y",
+        "getAddrDetails": "N",
+        "pageNum": 1
+    }
+    
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            r = await client.get(url, params=params)
+            if r.status_code != 200:
+                return None
+            data = r.json()
+            results = data.get("results", [])
+            if not results:
+                return None
+            
+            best = results[0]
+            lat = float(best["LATITUDE"])
+            lon = float(best["LONGITUDE"])
+            if not is_in_singapore(lat, lon):
+                return None
+            return (lat, lon)
+        except Exception as e:
+            print(f"[geo] onemap error: {e}")
+            return None
 
 async def geocode_nominatim(name: str, postal_code: str = "") -> Optional[tuple]:
     # Check cache first
@@ -100,9 +123,6 @@ async def geocode_nominatim(name: str, postal_code: str = "") -> Optional[tuple]
             print(f"[geo] nominatim error: {e}")
             return None
 
-# ─────────────────────────────────────────
-# 4. Overpass — find OSM nodes within 100m
-# ─────────────────────────────────────────
 
 async def query_overpass_nearby(lat: float, lon: float, radius: int = 300) -> list:
     query = f"""
@@ -123,9 +143,6 @@ async def query_overpass_nearby(lat: float, lon: float, radius: int = 300) -> li
             print(f"[geo] overpass error: {e}")
             return []
 
-# ─────────────────────────────────────────
-# 5. OSM edit age extraction
-# ─────────────────────────────────────────
 
 def extract_edit_age_days(node: dict) -> Optional[float]:
     timestamp = node.get("timestamp")  # e.g. "2021-03-15T10:22:00Z"
@@ -138,9 +155,7 @@ def extract_edit_age_days(node: dict) -> Optional[float]:
     except Exception:
         return None
 
-# ─────────────────────────────────────────
-# 6. Contributor edit count from Changeset API
-# ─────────────────────────────────────────
+
 
 async def get_contributor_edit_count(username: str) -> Optional[int]:
     if not username:
@@ -152,6 +167,8 @@ async def get_contributor_edit_count(username: str) -> Optional[int]:
     async with httpx.AsyncClient(timeout=5) as client:
         try:
             r = await client.get(url, params=params, headers=headers)
+            if r.status_code != 200:
+                return None
             data = r.json()
             changesets = data.get("changesets", [])
             return len(changesets)  # count of recent changesets (max 100)
@@ -159,9 +176,7 @@ async def get_contributor_edit_count(username: str) -> Optional[int]:
             print(f"[geo] changeset api error: {e}")
             return None
 
-# ─────────────────────────────────────────
-# 7. Main geo signal — ties everything together
-# ─────────────────────────────────────────
+
 
 async def get_geo_signal(name: str, lat: float, lon: float, postal_code: str = "") -> dict:
     await init_db()

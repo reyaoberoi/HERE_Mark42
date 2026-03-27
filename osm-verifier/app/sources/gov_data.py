@@ -14,10 +14,8 @@ from sentence_transformers import SentenceTransformer, util
 DB_PATH = Path("gov_data.sqlite")
 MODEL = None  # lazy load
 
-# ── Fuzzy match threshold ──────────────────────────────────────────────────
 MATCH_THRESHOLD = 0.82
 
-# ── Dataset download URLs (no login needed) ────────────────────────────────
 DATASETS = {
     "nea_food": "https://data.gov.sg/api/action/datastore_search?resource_id=d_4a686577e74131a8d5bc9a7cf6b8a559&limit=10000",
     "hawker":   "https://data.gov.sg/api/action/datastore_search?resource_id=d_bda4baa634dd1cc7a6189bef827d77ab&limit=10000",
@@ -52,7 +50,6 @@ def init_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_name_postal ON pois(name, postal_code)")
     conn.commit()
 
-    # Only download if table is empty
     cur.execute("SELECT COUNT(*) FROM pois")
     if cur.fetchone()[0] > 0:
         conn.close()
@@ -83,14 +80,12 @@ def _fuzzy_lookup(name: str, postal_code: str = "") -> dict:
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
-    # Pull candidates — filter by postal if provided
     if postal_code:
         cur.execute("SELECT name, licence_status, source FROM pois WHERE postal_code=?", (postal_code,))
         rows = cur.fetchall()
     else:
         rows = []
 
-    # Fallback: all rows (capped for speed)
     if not rows:
         cur.execute("SELECT name, licence_status, source FROM pois LIMIT 5000")
         rows = cur.fetchall()
@@ -118,53 +113,21 @@ def _fuzzy_lookup(name: str, postal_code: str = "") -> dict:
     return {"gov_listed": False, "licence_status": "UNKNOWN", "match_score": round(best_score, 3), "matched_source": None}
 
 
-async def check_wikidata(name: str) -> dict:
-    """SPARQL query for P576 dissolved + P582 end time."""
-    sparql = f"""
-    SELECT ?item ?dissolvedDate ?endTime WHERE {{
-      ?item rdfs:label "{name}"@en .
-      OPTIONAL {{ ?item wdt:P576 ?dissolvedDate . }}
-      OPTIONAL {{ ?item wdt:P582 ?endTime . }}
-    }} LIMIT 5
-    """
-    url = "https://query.wikidata.org/sparql"
-    headers = {"Accept": "application/json", "User-Agent": "osm-sg-validator/1.0"}
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params={"query": sparql}, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as resp:
-                data = await resp.json()
-                bindings = data.get("results", {}).get("bindings", [])
-                if bindings:
-                    b = bindings[0]
-                    dissolved = b.get("dissolvedDate", {}).get("value")
-                    end_time = b.get("endTime", {}).get("value")
-                    if dissolved or end_time:
-                        return {"wikidata_dissolved": True, "dissolved_date": dissolved or end_time}
-                return {"wikidata_dissolved": False, "dissolved_date": None}
-    except Exception as e:
-        print(f"[wikidata] Error: {e}")
-        return {"wikidata_dissolved": False, "dissolved_date": None}
+
 
 
 async def check_gov_data(name: str, postal_code: str = "") -> dict:
     """
-    Main entry point. Returns combined gov + wikidata signal.
-    Returns dict with keys: signal, gov_listed, licence_status,
-                             wikidata_dissolved, detail
+    Main entry point. Returns gov signal.
+    Returns dict with keys: signal, gov_listed, licence_status, detail
     """
     try:
-        # Ensure DB is ready
         if not DB_PATH.exists():
             init_db()
 
         gov_result = _fuzzy_lookup(name, postal_code)
-        wiki_result = await check_wikidata(name)
 
-        # Determine signal
-        if wiki_result["wikidata_dissolved"]:
-            signal = "closed"
-            detail = f"Wikidata dissolved: {wiki_result['dissolved_date']}"
-        elif gov_result["gov_listed"]:
+        if gov_result["gov_listed"]:
             status = gov_result["licence_status"].lower()
             if any(w in status for w in ["active", "valid", "approved"]):
                 signal = "active"
@@ -180,18 +143,16 @@ async def check_gov_data(name: str, postal_code: str = "") -> dict:
         return {
             "source": "gov_data",
             "signal": signal,
-            "confidence": 0.9 if gov_result["gov_listed"] or wiki_result["wikidata_dissolved"] else 0.3,
+            "confidence": 0.9 if gov_result["gov_listed"] else 0.3,
             "detail": detail,
             "gov_listed": gov_result["gov_listed"],
             "licence_status": gov_result["licence_status"],
-            "wikidata_dissolved": wiki_result["wikidata_dissolved"],
         }
     except Exception as e:
         print(f"[gov_data] Unexpected error: {e}")
         return {"source": "gov_data", "signal": "unknown", "confidence": 0.0, "detail": str(e)}
 
 
-# ── Quick test ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     init_db()
     result = asyncio.run(check_gov_data("Lau Pa Sat", "048023"))

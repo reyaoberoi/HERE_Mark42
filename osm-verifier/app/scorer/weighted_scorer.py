@@ -32,7 +32,8 @@ from typing import Optional
 # stats     : population-level staleness percentile signal
 # social_signal  : Reddit SG + DuckDuckGo presence
 WEIGHTS: dict[str, float] = {
-    "gov_data":       0.30,
+    "gov_data":       0.25,
+    "wikidata":       0.05,
     "geo":            0.25,
     "food_platforms": 0.25,
     "stats":          0.10,
@@ -70,7 +71,6 @@ class ScorerResult:
     unknown_sources: list[str] = field(default_factory=list)
 
 
-# ── Internal helpers ───────────────────────────────────────────────────────
 
 def _build_narrative(
     weighted_score: float,
@@ -105,7 +105,6 @@ def _build_narrative(
     )
 
 
-# ── Main entry point ────────────────────────────────────────────────────────
 
 def compute_score(sources: list[SourceInput]) -> ScorerResult:
     """
@@ -122,15 +121,14 @@ def compute_score(sources: list[SourceInput]) -> ScorerResult:
     """
     source_map: dict[str, SourceInput] = {s.source: s for s in sources}
 
-    # Check for Wikidata veto (gov_data signals closed at high confidence)
-    gov = source_map.get("gov_data")
+    # Check for Wikidata veto (now it comes from "wikidata" source)
+    wiki = source_map.get("wikidata")
     wikidata_veto = (
-        gov is not None
-        and gov.signal == "closed"
-        and gov.confidence >= 0.85
+        wiki is not None
+        and wiki.signal == "closed"
+        and wiki.confidence >= 0.85
     )
 
-    # ── Classify sources into voting vs excluded ───────────────────────────
     # Excluded: unknown signal with very low confidence (errors, no data)
     LOW_CONF_THRESHOLD = 0.45
     voting_sources: list[SourceInput] = []
@@ -153,7 +151,6 @@ def compute_score(sources: list[SourceInput]) -> ScorerResult:
             if src.signal == "unknown":
                 unknown_sources.append(source_name)
 
-    # ── Redistribute weight from excluded sources ─────────────────────────
     total_excluded_weight = sum(WEIGHTS.get(s, 0) for s in excluded_sources)
     total_voting_base_weight = sum(WEIGHTS.get(s.source, 0) for s in voting_sources)
 
@@ -163,7 +160,7 @@ def compute_score(sources: list[SourceInput]) -> ScorerResult:
     else:
         redistribution_factor = 1.0
 
-    # ── Compute weighted score ────────────────────────────────────────────
+
     weighted_sum = 0.0
     total_effective_weight = 0.0
     breakdown: list[dict] = []
@@ -208,15 +205,12 @@ def compute_score(sources: list[SourceInput]) -> ScorerResult:
     else:
         weighted_score = 0.0
 
-    # ── Signal agreement bonus ────────────────────────────────────────────
     active_count = sum(1 for s in voting_sources if s.signal == "active")
     closed_count = sum(1 for s in voting_sources if s.signal == "closed")
     agreement_bonus = 0.0
     if active_count >= 2 or closed_count >= 2:
         agreement_bonus = 0.10
 
-    # ── Confidence calculation ────────────────────────────────────────────
-    # Weighted average of voting sources' confidences, scaled by coverage
     if voting_sources:
         voting_conf_sum = sum(
             WEIGHTS.get(s.source, 0) * s.confidence
@@ -261,6 +255,10 @@ def compute_score(sources: list[SourceInput]) -> ScorerResult:
     else:
         recommendation = "REVIEW"
 
+    # Cap: Prevent weak signals from unilaterally authorizing a result
+    if total_voting_base_weight < 0.25:
+        recommendation = "REVIEW"
+
     # Edge case: very low confidence overall → escalate to REVIEW
     if confidence < 0.10 and recommendation != "REJECT":
         recommendation = "REVIEW"
@@ -282,7 +280,6 @@ def compute_score(sources: list[SourceInput]) -> ScorerResult:
     )
 
 
-# ── Convenience: build SourceInput from raw source dicts ────────────────────
 
 def source_input_from_dict(d: dict) -> SourceInput:
     """
@@ -297,9 +294,7 @@ def source_input_from_dict(d: dict) -> SourceInput:
     )
 
 
-# ── Quick test ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Simulate: gov says active, food platforms say closed, social unknown
     test_sources = [
         SourceInput("gov_data",       "active",  0.9,  "NEA licence active"),
         SourceInput("food_platforms", "closed",  0.85, "Burpple closed badge"),
@@ -325,7 +320,8 @@ if __name__ == "__main__":
 
     # Simulate: Wikidata dissolved (hard veto)
     test_sources_3 = [
-        SourceInput("gov_data",       "closed", 0.95, "Wikidata dissolved 2023"),
+        SourceInput("gov_data",       "unknown", 0.0, ""),
+        SourceInput("wikidata",       "closed", 0.95, "Wikidata dissolved 2023"),
         SourceInput("food_platforms", "active", 0.6,  "Old Burpple listing"),
         SourceInput("social_signal",  "unknown", 0.1, "No Reddit"),
     ]

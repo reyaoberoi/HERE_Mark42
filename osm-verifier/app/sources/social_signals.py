@@ -32,10 +32,12 @@ async def _search_reddit(session: aiohttp.ClientSession, name: str, subreddit: s
                 d = p.get("data", {})
                 created_utc = d.get("created_utc")
                 title = d.get("title", "")
+                selftext = d.get("selftext", "")
+                
                 if created_utc:
                     dt = datetime.fromtimestamp(created_utc, tz=timezone.utc)
                     results.append({
-                        "title": title,
+                        "title": title + " " + selftext,
                         "date": dt.strftime("%Y-%m-%d"),
                         "subreddit": subreddit,
                         "url": f"https://reddit.com{d.get('permalink', '')}",

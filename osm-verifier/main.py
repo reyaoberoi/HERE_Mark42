@@ -18,20 +18,37 @@ import os
 import asyncio
 import httpx
 import psycopg2
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
-from app.map_view import generate_map
-from app.sources.geo import get_geo_signal, geocode_nominatim, query_overpass_nearby
+from fastapi import FastAPI, Query, HTTPException
+from dotenv import load_dotenv
+
+from models import VerifyRequest, VerifyResponse, SourceResult
+from app.sources.geo import get_geo_signal, geocode_nominatim, query_overpass_nearby, geocode_onemap
 from app.sources.stats import get_staleness_signal, get_neighbourhood_density, load_stats
 from app.sources.gov_data import check_gov_data
+from app.sources.wikidata import check_wikidata
 from app.sources.food_platforms import check_food_platforms
 from app.sources.social_signals import check_social_signal
 from app.scorer.weighted_scorer import compute_score, source_input_from_dict
-from dotenv import load_dotenv 
-from app.models import VerifyRequest, VerifyResponse, SourceResult
 import logging
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
+import folium
+
+def generate_map(lat, lon, result):
+    m = folium.Map(location=[lat, lon], zoom_start=18)
+    color = "blue"
+    if result.get("recommendation") == "ACCEPT": color = "green"
+    elif result.get("recommendation") == "REJECT": color = "red"
+    elif result.get("recommendation") == "REVIEW": color = "orange"
+    
+    folium.Marker(
+        [lat, lon],
+        popup=f"<b>{result.get('osm_node_id', 'Unknown')}</b><br>{result.get('recommendation', '')}",
+        tooltip=result.get('recommendation', 'POI'),
+        icon=folium.Icon(color=color)
+    ).add_to(m)
+    return m.get_root().render()
 
 load_dotenv()
 
@@ -117,11 +134,16 @@ async def search(q: str):
                 ) sub
                 WHERE name ILIKE %s 
                 OR name %% %s
-                ORDER BY similarity(name, %s) DESC
+                OR (all_tags->>'addr:street') ILIKE %s
+                OR (all_tags->>'addr:postcode') ILIKE %s
+                ORDER BY GREATEST(
+                    similarity(COALESCE(name, ''), %s),
+                    similarity(COALESCE(all_tags->>'addr:street', ''), %s)
+                ) DESC
                 LIMIT 10
             """
             cur.execute(query, (SG_MIN_LAT, SG_MAX_LAT, SG_MIN_LON, SG_MAX_LON,
-                                f"%{q}%", q, q))
+                                f"%{q}%", q, f"%{q}%", f"{q}%", q, q))
             rows = cur.fetchall()
             for r in rows:
                 candidates.append({
@@ -138,8 +160,10 @@ async def search(q: str):
 
     # ── 2. Fallback to Nominatim/Overpass if few local results ──────────────
     if len(candidates) < 3:
-        logger.info("Fewer than 3 local results. Trying external OSM search (Nominatim/Overpass)...")
-        coords = await geocode_nominatim(q)
+        logger.info("Fewer than 3 local results. Trying external OSM search (OneMap/Nominatim)...")
+        coords = await geocode_onemap(q)
+        if not coords:
+            coords = await geocode_nominatim(q)
         if coords:
             lat, lon = coords
             nodes = await query_overpass_nearby(lat, lon, radius=500)
@@ -183,9 +207,10 @@ async def verify(req: VerifyRequest):
     #1. Run geo + three external sources concurrently
     logger.info(f"Initiating verification for node {req.osm_node_id} ({req.name})")
     
-    geo_raw, gov_raw, food_raw, social_raw = await asyncio.gather(
+    geo_raw, gov_raw, wiki_raw, food_raw, social_raw = await asyncio.gather(
         get_geo_signal(name=req.name, lat=req.lat, lon=req.lon, postal_code=postal_code),
         check_gov_data(req.name, postal_code),
+        check_wikidata(req.name),
         check_food_platforms(req.name),
         check_social_signal(req.name),
         return_exceptions=True,
@@ -204,17 +229,14 @@ async def verify(req: VerifyRequest):
         logger.info(f"Source {source_name} completed with signal: {result.get('signal')}")
         return result
 
-    geo_raw   = _safe(geo_raw,    "geo")
-    gov_raw   = _safe(gov_raw,    "gov_data")
-    food_raw  = _safe(food_raw,   "food_platforms")
+    geo_raw    = _safe(geo_raw,    "geo")
+    gov_raw    = _safe(gov_raw,    "gov_data")
+    wiki_raw   = _safe(wiki_raw,   "wikidata")
+    food_raw   = _safe(food_raw,   "food_platforms")
     social_raw = _safe(social_raw, "social_signal")
 
     #2. Stats signal — try geo meta first, fallback to direct OSM node lookup
     stats_cache = load_stats()
-    edit_age = (geo_result.get("meta") or {}).get("edit_age_days")
-    stats_result = get_staleness_signal(edit_age, None, stats_cache) if edit_age else {
-        "source": "stats", "signal": "unknown", "confidence": 0.1, "detail": "No edit age"
-    }
     edit_age = geo_raw.get("meta", {}).get("edit_age_days") if isinstance(geo_raw.get("meta"), dict) else None
 
     # If geo didn't provide edit age, try direct OSM node lookup
@@ -250,7 +272,7 @@ async def verify(req: VerifyRequest):
     density = get_neighbourhood_density(req.lat, req.lon, stats_cache)
 
     #4. Weighted scorer
-    all_sources = [geo_raw, gov_raw, food_raw, stats_raw, social_raw]
+    all_sources = [geo_raw, gov_raw, wiki_raw, food_raw, stats_raw, social_raw]
     scorer_inputs = [source_input_from_dict(s) for s in all_sources]
     result = compute_score(scorer_inputs)
 
@@ -265,7 +287,38 @@ async def verify(req: VerifyRequest):
         for b in result.source_breakdown
     ]
 
+    # --- BASELINE UPDATE & COMPARE ---
+    baseline_info = "Baseline DB Sync: Not found locally"
+    try:
+        if req.osm_node_id:
+            conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+            with conn.cursor() as cur:
+                # Ensure the tracking column exists
+                cur.execute("ALTER TABLE raw_osm_data ADD COLUMN IF NOT EXISTS verified_status VARCHAR DEFAULT 'unverified';")
+                conn.commit()
+                
+                # Check current baseline status
+                # ogr2ogr creates osm_id as varchar or integer depending on config, we cast safely.
+                cur.execute("SELECT verified_status FROM raw_osm_data WHERE osm_id::text = %s", (str(req.osm_node_id),))
+                row = cur.fetchone()
+                if row:
+                    prev_status = row[0] or "unverified"
+                    
+                    # Update baseline
+                    new_status = "closed" if result.recommendation == "REJECT" else ("active" if result.recommendation == "ACCEPT" else prev_status)
+                    if new_status != prev_status:
+                        cur.execute("UPDATE raw_osm_data SET verified_status = %s WHERE osm_id::text = %s", (new_status, str(req.osm_node_id)))
+                        conn.commit()
+                        baseline_info = f"Baseline DB Sync: Updated from '{prev_status}' to '{new_status}'"
+                    else:
+                        baseline_info = f"Baseline DB Sync: Remains '{prev_status}'"
+            conn.close()
+    except Exception as e:
+        logger.error(f"Baseline update failed: {e}")
+        baseline_info = f"Baseline DB Sync: Error ({e})"
+
     narrative = (
+        f"[{baseline_info}]\n"
         f"{result.narrative} | "
         f"Area density: {density} nodes/500m cell"
     )
