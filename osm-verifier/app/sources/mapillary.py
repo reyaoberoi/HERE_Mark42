@@ -3,8 +3,26 @@ import os
 import io
 import asyncio
 import httpx
+from datetime import datetime, timezone
 
 MAPILLARY_API = "https://graph.mapillary.com/images"
+
+
+def _format_capture_date(raw_value) -> str | None:
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, (int, float)):
+        try:
+            # Mapillary may return unix milliseconds.
+            ts = float(raw_value)
+            if ts > 1e12:
+                ts = ts / 1000.0
+            return datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
+        except Exception:
+            return str(raw_value)
+    text = str(raw_value)
+    # Handles ISO strings like 2023-07-11T10:20:30Z
+    return text[:10] if len(text) >= 10 else text
 
 
 def _mapillary_token() -> str:
@@ -41,7 +59,7 @@ async def fetch_mapillary(lat: float, lon: float) -> dict:
     try:
         async with httpx.AsyncClient(timeout=12) as client:
             params = {
-                "fields": "id,captured_at,thumb_256_url",
+                "fields": "id,captured_at,thumb_2048_url,thumb_1024_url,thumb_256_url",
                 "bbox": f"{lon-0.0005},{lat-0.0005},{lon+0.0005},{lat+0.0005}",
                 "limit": 50,
             }
@@ -71,8 +89,20 @@ async def fetch_mapillary(lat: float, lon: float) -> dict:
         oldest = images[0]
         newest = images[-1]
 
-        before_url = oldest.get("thumb_256_url")
-        after_url  = newest.get("thumb_256_url")
+        old_date = _format_capture_date(oldest.get("captured_at"))
+        new_date = _format_capture_date(newest.get("captured_at"))
+
+        before_url = oldest.get("thumb_1024_url") or oldest.get("thumb_256_url") or oldest.get("thumb_2048_url")
+        after_url  = newest.get("thumb_1024_url") or newest.get("thumb_256_url") or newest.get("thumb_2048_url")
+
+        if not before_url or not after_url:
+            return {
+                "source": "mapillary", "status": "UNKNOWN", "confidence": 0.0,
+                "detail": "Mapillary images found but thumbnail URLs unavailable",
+                "before_image_url": None, "after_image_url": None,
+                "before_date": old_date, "after_date": new_date,
+                "visual_delta_score": None, "change_class": None,
+            }
 
         # Download and compare
         delta_score, change_class = await _compute_ssim_diff(before_url, after_url)
@@ -81,11 +111,11 @@ async def fetch_mapillary(lat: float, lon: float) -> dict:
         if change_class == "major_change":
             status = "CLOSED"
             confidence = 0.65
-            detail = f"Major visual change detected between {oldest['captured_at'][:10]} and {newest['captured_at'][:10]}"
+            detail = f"Major visual change detected between {old_date or 'unknown'} and {new_date or 'unknown'}"
         elif change_class == "no_change":
             status = "ACTIVE"
             confidence = 0.60
-            detail = f"Shopfront unchanged between {oldest['captured_at'][:10]} and {newest['captured_at'][:10]}"
+            detail = f"Shopfront unchanged between {old_date or 'unknown'} and {new_date or 'unknown'}"
         else:
             status = "UNKNOWN"
             confidence = 0.30
@@ -98,8 +128,8 @@ async def fetch_mapillary(lat: float, lon: float) -> dict:
             "detail": detail,
             "before_image_url": before_url,
             "after_image_url":  after_url,
-            "before_date": oldest.get("captured_at", "")[:10],
-            "after_date":  newest.get("captured_at", "")[:10],
+            "before_date": old_date,
+            "after_date":  new_date,
             "visual_delta_score": delta_score,
             "change_class": change_class,
         }

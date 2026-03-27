@@ -528,3 +528,70 @@ C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark4
   self._smallest_subnormal = nextafter(
 C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\numpy\core\getlimits.py:52: RuntimeWarning: invalid value encountered in log10
   self.precision = int(-log10(self.eps))
+WARNING:  StatReload detected changes in 'venv\Lib\site-packages\numpy\conftest.py'. Reloading...
+INFO:     Started server process [35136]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+Task exception was never retrieved
+future: <Task finished name='Task-34' coro=<Connection.run() done, defined at C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_connection.py:305> exception=NotImplementedError()>
+Traceback (most recent call last):
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_connection.py", line 312, in run
+    await self._transport.connect()
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_transport.py", line 133, in connect
+    raise exc
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_transport.py", line 120, in connect
+    self._proc = await asyncio.create_subprocess_exec(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\subprocess.py", line 224, in create_subprocess_exec
+    transport, protocol = await loop.subprocess_exec(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        stderr=stderr, **kwds)
+        ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 1798, in subprocess_exec
+    transport = await self._make_subprocess_transport(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        protocol, popen_args, False, stdin, stdout, stderr,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        bufsize, **kwargs)
+        ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 533, in _make_subprocess_transport
+    raise NotImplementedError
+NotImplementedError
+Task exception was never retrieved
+future: <Task finished name='Task-44' coro=<Connection.run() done, defined at C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_connection.py:305> exception=NotImplementedError()>
+Traceback (most recent call last):
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_connection.py", line 312, in run
+    await self._transport.connect()
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_transport.py", line 133, in connect
+    raise exc
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_transport.py", line 120, in connect
+    self._proc = await asyncio.create_subprocess_exec(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\subprocess.py", line 224, in create_subprocess_exec
+    transport, protocol = await loop.subprocess_exec(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        stderr=stderr, **kwds)
+        ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 1798, in subprocess_exec
+    transport = await self._make_subprocess_transport(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        protocol, popen_args, False, stdin, stdout, stderr,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        bufsize, **kwargs)
+        ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 533, in _make_subprocess_transport
+    raise NotImplementedError
+NotImplementedError
+WARNING:  StatReload detected changes in 'app\sources\mapillary.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [35136]

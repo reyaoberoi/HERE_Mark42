@@ -32,8 +32,36 @@ from app.osm.changeset import submit_osm_changeset
 
 HEATMAP_CACHE = []
 CACHE_DB_PATH = str(Path(__file__).resolve().with_name("cache.db"))
-CACHE_SCHEMA_VERSION = 2
+CACHE_SCHEMA_VERSION = 4
+CONTRADICTIONS_DIR = Path(__file__).resolve().with_name("contradictions")
+CONTRADICTIONS_PATH = CONTRADICTIONS_DIR / "live_contradictions.json"
 load_dotenv(Path(__file__).resolve().with_name(".env"))
+
+
+def _read_contradictions() -> list[dict]:
+    if not CONTRADICTIONS_PATH.exists():
+        return []
+    try:
+        return json.loads(CONTRADICTIONS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+def _record_contradiction(entry: dict) -> bool:
+    try:
+        CONTRADICTIONS_DIR.mkdir(parents=True, exist_ok=True)
+        records = _read_contradictions()
+        dedupe_key = f"{entry.get('osm_id') or ''}|{entry.get('place_name') or ''}|{entry.get('predicted_status') or ''}"
+        if any(r.get("dedupe_key") == dedupe_key for r in records):
+            return False
+        payload = dict(entry)
+        payload["dedupe_key"] = dedupe_key
+        payload["created_at"] = datetime.now(timezone.utc).isoformat()
+        records.insert(0, payload)
+        CONTRADICTIONS_PATH.write_text(json.dumps(records[:500], indent=2), encoding="utf-8")
+        return True
+    except Exception:
+        return False
 
 def _cache_db():
     conn = sqlite3.connect(CACHE_DB_PATH)
@@ -106,6 +134,26 @@ def _build_summary(
     )
 
 
+def _confidence_formula(
+    prior_p_active: float | None,
+    active_sources: list[str],
+    closure_sources: list[str],
+    conflict_flag: bool,
+    p_active: float | None,
+    p_closed: float | None,
+) -> str:
+    prior = round(float(prior_p_active if prior_p_active is not None else 0.70), 2)
+    active_count = len(active_sources)
+    closed_count = len(closure_sources)
+    p_active_txt = round(float(p_active if p_active is not None else 0.0), 3)
+    p_closed_txt = round(float(p_closed if p_closed is not None else 0.0), 3)
+    conflict_txt = "yes" if conflict_flag else "no"
+    return (
+        f"base_prior={prior}; active_signals={active_count}; closed_signals={closed_count}; "
+        f"p_active={p_active_txt}; p_closed={p_closed_txt}; conflict={conflict_txt}; weighted_logit"
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
@@ -139,6 +187,14 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "ok", "heatmap_nodes": len(HEATMAP_CACHE)}
+
+
+@app.get("/contradictions")
+async def contradictions():
+    return {
+        "count": len(_read_contradictions()),
+        "items": _read_contradictions(),
+    }
 
 
 @app.get("/data-sources")
@@ -282,6 +338,9 @@ async def verify(req: VerifyRequest):
     conflict_flag = score_result.get("conflict_flag", False)
     changeset_diff = generate_changeset_diff(geo) if osm_found else None
     narrative = score_result.get("narrative", "")
+    p_active = score_result.get("posterior")
+    p_closed = score_result.get("p_closed")
+    contradiction_flag = bool(score_result.get("contradiction_flag", False))
 
     considered_sources = score_result.get("considered_sources", [])
     active_sources = score_result.get("active_sources", [])
@@ -307,6 +366,15 @@ async def verify(req: VerifyRequest):
     )
 
     source_objs = score_result.get("sources", [])
+    matched_sources = [s for s in source_objs if s.status != "UNKNOWN"]
+    confidence_formula = _confidence_formula(
+        staleness.get("prior_p_active"),
+        active_sources,
+        closure_sources,
+        conflict_flag,
+        p_active,
+        p_closed,
+    )
     mapillary = by_source.get("mapillary", {})
     pipeline_steps.append({
         "id": "scoring",
@@ -315,6 +383,22 @@ async def verify(req: VerifyRequest):
         "duration_ms": round((time.perf_counter() - started_at) * 1000, 1),
         "sources": considered_sources,
     })
+
+    contradiction_recorded = False
+    if contradiction_flag and recommendation != "REVIEW" and predicted_status != "Uncertain":
+        contradiction_recorded = _record_contradiction({
+            "place_name": req.name,
+            "address": req.address,
+            "osm_id": osm_id,
+            "lat": lat,
+            "lon": lon,
+            "recommendation": recommendation,
+            "predicted_status": predicted_status,
+            "confidence": confidence,
+            "matched_source_count": len(matched_sources),
+            "matched_sources": [s.model_dump() for s in matched_sources],
+            "confidence_formula": confidence_formula,
+        })
 
     result = VerifyResponse(
         summary=summary,
@@ -334,6 +418,11 @@ async def verify(req: VerifyRequest):
         active_sources=active_sources,
         closure_sources=closure_sources,
         source_count=len(considered_sources),
+        matched_sources=matched_sources,
+        matched_source_count=len(matched_sources),
+        confidence_formula=confidence_formula,
+        contradiction_flag=contradiction_flag,
+        contradiction_recorded=contradiction_recorded,
         edit_age_days=edit_age_days,
         neighbourhood_activity_score=staleness.get("neighbourhood_activity_score"),
         prior_p_active=staleness.get("prior_p_active"),
@@ -377,7 +466,12 @@ async def search(q: str):
                     "osm_node_id": str(hit.get("osm_id", "")),
                     "name": hit.get("display_name", q).split(",")[0],
                     "lat": h_lat, "lon": h_lon,
-                    "tags": {"type": hit.get("osm_type", "node")},
+                    "tags": {
+                        "osm_type": hit.get("osm_type", "node"),
+                        "class": hit.get("class", ""),
+                        "type": hit.get("type", ""),
+                    },
+                    "source": "nominatim",
                 })
         except Exception:
             pass
@@ -386,7 +480,8 @@ async def search(q: str):
             try:
                 oq = f"""[out:json][timeout:10];
                 (node(around:300,{lat},{lon})["name"~"{q}",i];
-                 way(around:300,{lat},{lon})["name"~"{q}",i];);out meta 8;"""
+                 way(around:300,{lat},{lon})["name"~"{q}",i];
+                 rel(around:300,{lat},{lon})["name"~"{q}",i];);out center meta 8;"""
                 r2 = await client.post(OVERPASS, data={"data": oq})
                 for el in r2.json().get("elements", []):
                     tags = el.get("tags", {})
@@ -396,12 +491,21 @@ async def search(q: str):
                     node_id = str(el.get("id", ""))
                     if any(c["osm_node_id"] == node_id for c in candidates):
                         continue
+                    el_lat = el.get("lat")
+                    el_lon = el.get("lon")
+                    if el_lat is None or el_lon is None:
+                        center = el.get("center") or {}
+                        el_lat = center.get("lat")
+                        el_lon = center.get("lon")
+                    if el_lat is None or el_lon is None:
+                        continue
                     candidates.append({
                         "osm_node_id": node_id,
                         "name": name,
-                        "lat": el.get("lat", lat),
-                        "lon": el.get("lon", lon),
+                        "lat": float(el_lat),
+                        "lon": float(el_lon),
                         "tags": tags,
+                        "source": "overpass",
                     })
             except Exception:
                 pass

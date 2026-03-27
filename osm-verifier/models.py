@@ -52,6 +52,11 @@ class VerifyResponse(BaseModel):
     active_sources: List[str] = []
     closure_sources: List[str] = []
     source_count: int = 0
+    matched_sources: List[SourceSignal] = []
+    matched_source_count: int = 0
+    confidence_formula: Optional[str] = None
+    contradiction_flag: bool = False
+    contradiction_recorded: bool = False
 
     # Staleness
     edit_age_days: Optional[int] = None

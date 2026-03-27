@@ -10,7 +10,7 @@ SOURCE_WEIGHT = {
     "sg_gov_live": 1.40,
     "food_platforms": 1.15,
     "tripadvisor": 0.90,
-    "mapillary": 1.20,
+    "mapillary": 1.55,
     "reddit": 0.65,
     "wayback": 0.85,
     "wikidata": 0.95,
@@ -119,29 +119,51 @@ def compute_score(
 
     posterior = _sigmoid(_logit(prior) + 1.08 * evidence_sum + geo_bias - age_penalty)
 
+    mapillary_status = _norm_status((source_map.get("mapillary") or {}).get("status", "UNKNOWN"))
+    mapillary_conf = _clamp(float((source_map.get("mapillary") or {}).get("confidence", 0.0) or 0.0), 0.0, 1.0)
+    strong_mapillary_closed = mapillary_status == "CLOSED" and mapillary_conf >= 0.60
+
     conflict_flag = bool(active_high and closed_high)
     if conflict_flag:
         posterior = 0.5 + (posterior - 0.5) * 0.45
 
-    confidence = int(round(_clamp(posterior, 0.0, 1.0) * 100))
+    # Strong visual closure from Mapillary should not collapse to "uncertain"
+    # when only stale OSM tags still claim the place is active.
+    if strong_mapillary_closed and geo.get("osm_found"):
+        non_osm_active = [s for s in active_sources if s != "osm_geo"]
+        if not non_osm_active:
+            posterior = min(posterior, 0.24)
+
+    p_active = _clamp(posterior, 0.0, 1.0)
+    p_closed = 1.0 - p_active
+    confidence = int(round(max(p_active, p_closed) * 100))
 
     if conflict_flag:
         recommendation = "REVIEW"
-    elif posterior >= 0.72:
+    elif strong_mapillary_closed and p_closed >= 0.72:
+        recommendation = "REJECT"
+    elif p_active >= 0.72:
         recommendation = "ACCEPT"
-    elif posterior <= 0.38 and closure_sources:
+    elif p_closed >= 0.62 and (closure_sources or strong_mapillary_closed):
         recommendation = "REJECT"
     else:
         recommendation = "REVIEW"
 
-    if not geo.get("osm_found") and posterior >= 0.55:
+    if not geo.get("osm_found") and p_active >= 0.55:
         predicted_status = "New Place"
-    elif posterior <= 0.40:
+    elif p_closed >= 0.62:
         predicted_status = "Recently Closed"
-    elif posterior >= 0.72:
+    elif p_active >= 0.72:
         predicted_status = "Established"
     else:
         predicted_status = "Uncertain"
+
+    contradiction_flag = bool(
+        geo.get("osm_found")
+        and predicted_status == "Recently Closed"
+        and recommendation == "REJECT"
+        and not conflict_flag
+    )
 
     narrative = build_narrative(sources_out, recommendation, confidence, conflict_flag)
 
@@ -152,7 +174,10 @@ def compute_score(
         "sources": sources_out,
         "narrative": narrative,
         "conflict_flag": conflict_flag,
-        "posterior": posterior,
+        "posterior": p_active,
+        "p_closed": p_closed,
+        "strong_mapillary_closed": strong_mapillary_closed,
+        "contradiction_flag": contradiction_flag,
         "considered_sources": considered_sources,
         "active_sources": active_sources,
         "closure_sources": closure_sources,
