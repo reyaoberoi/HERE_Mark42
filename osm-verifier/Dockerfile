@@ -13,9 +13,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Pre-cache the sentence-transformers model so first request is fast
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
-# Install Playwright chromium for food platform scraping
-RUN playwright install --with-deps chromium
-
 COPY . .
 
 EXPOSE 8000

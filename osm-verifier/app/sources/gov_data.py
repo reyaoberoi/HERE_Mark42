@@ -62,19 +62,31 @@ async def fetch_gov_data(name: str, lat: float, lon: float, postal_code: str = "
         best_idx = int(np.argmax(scores))
         best_score = float(scores[best_idx])
 
-        THRESHOLD = 0.55  # TF-IDF char-ngram threshold (lower than embedding threshold)
-        if best_score < THRESHOLD:
+        THRESHOLD = 0.55  # strong match
+        WEAK_THRESHOLD = 0.35
+        if best_score < WEAK_THRESHOLD:
             return {"source": "gov_data", "status": "UNKNOWN", "confidence": 0.0,
                     "detail": f"No SG govt match (best {best_score:.2f})"}
 
         row_name, status, addr, table = _corpus[best_idx]
         raw = status.lower()
-        if any(w in raw for w in ["cancel", "revok", "expir", "closed", "void"]):
+        if any(w in raw for w in ["cancel", "revok", "expir", "closed", "void", "ceased"]):
             signal = "CLOSED"
         elif raw in ("active", "valid", "approved", ""):
             signal = "ACTIVE"
         else:
             signal = "UNKNOWN"
+
+        if best_score < THRESHOLD and signal == "UNKNOWN":
+            signal = "ACTIVE"
+            conf = round(min(max(best_score * 0.9, 0.30), 0.55), 3)
+            return {
+                "source": "gov_data",
+                "status": signal,
+                "confidence": conf,
+                "detail": f"{table}: weak match '{row_name}' (score {best_score:.2f})",
+                "last_activity_date": None,
+            }
 
         return {
             "source": "gov_data",

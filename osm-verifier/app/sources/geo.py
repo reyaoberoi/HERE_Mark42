@@ -4,6 +4,7 @@ import sqlite3
 import json
 from datetime import datetime
 from pathlib import Path
+import re
 
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
 OVERPASS  = "https://overpass-api.de/api/interpreter"
@@ -79,26 +80,51 @@ async def fetch_geo(name: str, address: str) -> dict:
             return {"lat": None, "lon": None, "osm_found": False}
 
         # 2. Overpass: get full tags + meta for nearest POI node
+        safe_name = re.escape(name.strip())
         overpass_q = f"""
         [out:json][timeout:10];
         (
-          node(around:100,{lat},{lon})["name"~"{name}",i];
-          way(around:100,{lat},{lon})["name"~"{name}",i];
+          node(around:120,{lat},{lon})["name"~"{safe_name}",i];
+          way(around:120,{lat},{lon})["name"~"{safe_name}",i];
+          rel(around:120,{lat},{lon})["name"~"{safe_name}",i];
         );
-        out meta 1;
+        out center meta 12;
         """
         osm_node = {}
         try:
             r2 = await client.post(OVERPASS, data={"data": overpass_q})
             elements = r2.json().get("elements", [])
             if elements:
-                el = elements[0]
+                def _coords(elm):
+                    e_lat = elm.get("lat")
+                    e_lon = elm.get("lon")
+                    if e_lat is None or e_lon is None:
+                        c = elm.get("center") or {}
+                        e_lat = c.get("lat")
+                        e_lon = c.get("lon")
+                    return e_lat, e_lon
+
+                best = None
+                best_dist = 999999.0
+                for el in elements:
+                    e_lat, e_lon = _coords(el)
+                    if e_lat is None or e_lon is None:
+                        continue
+                    dist = abs(float(e_lat) - lat) + abs(float(e_lon) - lon)
+                    if dist < best_dist:
+                        best_dist = dist
+                        best = el
+
+                el = best or elements[0]
+                e_lat, e_lon = _coords(el)
                 osm_node = {
                     "osm_id": str(el.get("id")),
                     "osm_type": el.get("type"),
                     "tags": el.get("tags", {}),
                     "version": el.get("version", 1),
                     "timestamp": el.get("timestamp", ""),
+                    "lat": e_lat,
+                    "lon": e_lon,
                 }
         except Exception:
             pass
@@ -118,8 +144,8 @@ async def fetch_geo(name: str, address: str) -> dict:
                 pass
 
         result = {
-            "lat": lat,
-            "lon": lon,
+            "lat": float(osm_node.get("lat") or lat),
+            "lon": float(osm_node.get("lon") or lon),
             "osm_found": bool(osm_node),
             "osm_id": osm_node.get("osm_id"),
             "osm_type": osm_node.get("osm_type"),

@@ -3,21 +3,19 @@ import asyncio
 import os
 import re
 from datetime import datetime
-from typing import Optional
 import httpx
+
+try:
+    from bs4 import BeautifulSoup
+    BS4_OK = True
+except Exception:
+    BS4_OK = False
 
 try:
     from brave import AsyncBrave
     BRAVE_WRAPPER_OK = True
 except Exception:
     BRAVE_WRAPPER_OK = False
-
-# Try to import playwright — degrade gracefully if not installed
-try:
-    from playwright.async_api import async_playwright
-    PLAYWRIGHT_OK = True
-except ImportError:
-    PLAYWRIGHT_OK = False
 
 try:
     import dateparser
@@ -90,7 +88,7 @@ async def fetch_food_platforms(name: str, lat: float, lon: float) -> dict:
                 "status": "CLOSED",
                 "confidence": 0.65,
                 "last_activity_date": most_recent_str,
-                "detail": f"Last review {days_since} days ago — review flatline detected"
+                "detail": f"Last review {days_since} days ago - review flatline detected"
             }
         elif days_since <= 180:
             return {
@@ -106,61 +104,56 @@ async def fetch_food_platforms(name: str, lat: float, lon: float) -> dict:
                 "status": "UNKNOWN",
                 "confidence": 0.40,
                 "last_activity_date": most_recent_str,
-                "detail": f"Last activity {days_since} days ago — inconclusive"
+                "detail": f"Last activity {days_since} days ago - inconclusive"
             }
 
     return {
         "source": "food_platforms",
-        "status": "ACTIVE",
-        "confidence": 0.50,
-        "detail": "Found on food platform but no date data"
+        "status": "UNKNOWN",
+        "confidence": 0.25,
+        "detail": "Found on food platform but no recency signal"
     }
 
 
 async def _scrape_burpple(name: str) -> dict:
-    if not PLAYWRIGHT_OK:
-        return {"found": False, "closed": False, "last_date": None}
     try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            ctx = await browser.new_context(user_agent=(
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            ))
-            page = await ctx.new_page()
+        async with httpx.AsyncClient(timeout=10, headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+        }) as client:
             url = f"https://www.burpple.com/search/food?q={name.replace(' ', '+')}&loc=Singapore"
-            await page.goto(url, timeout=12000, wait_until="domcontentloaded")
-            await page.wait_for_timeout(2000)
+            resp = await client.get(url, follow_redirects=True)
+            content = resp.text
 
-            content = await page.content()
-            await browser.close()
+        closed = bool(re.search(r"permanently\s*closed|closed\s*down|no\s*longer\s*operating", content, re.IGNORECASE))
+        found = name.lower() in content.lower() or "burpple" in content.lower()
 
-            # Detect closed badge
-            closed = bool(re.search(r"permanently.closed|closed.down|no.longer.operating",
-                                     content, re.IGNORECASE))
+        last_date = None
+        date_patterns = [
+            r"\d+\s+(?:day|week|month|year)s?\s+ago",
+            r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}",
+            r"\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}",
+        ]
 
-            # Extract last review date
-            date_patterns = [
-                r"\d+\s+(?:day|week|month|year)s?\s+ago",
-                r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}",
-                r"\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}",
-            ]
-            last_date = None
-            for pat in date_patterns:
-                m = re.search(pat, content, re.IGNORECASE)
-                if m:
-                    last_date = m.group(0)
-                    break
+        if BS4_OK:
+            soup = BeautifulSoup(content, "html.parser")
+            text = soup.get_text(" ", strip=True)
+        else:
+            text = content
 
-            found = name.lower() in content.lower() or bool(last_date)
-            return {"found": found, "closed": closed, "last_date": last_date}
+        for pat in date_patterns:
+            m = re.search(pat, text, re.IGNORECASE)
+            if m:
+                last_date = m.group(0)
+                break
+
+        return {"found": found, "closed": closed, "last_date": last_date}
 
     except Exception as e:
         return {"found": False, "closed": False, "last_date": None, "_error": str(e)}
 
 
 async def _scrape_hungrygowhere(name: str) -> dict:
-    """HungryGoWhere via httpx (lighter than Playwright)."""
+    """HungryGoWhere via httpx."""
     try:
         async with httpx.AsyncClient(timeout=8, headers={
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
@@ -195,12 +188,12 @@ async def _brave_signal(name: str) -> dict:
 
     try:
         brave = AsyncBrave(api_key=api_key)
-        results = await brave.search(q=f"{name} Singapore restaurant", count=5, raw=True)
+        results = await brave.search(q=f"{name} Singapore restaurant open closed review", count=8, raw=True)
         web = (results or {}).get("web", {})
         items = web.get("results", []) if isinstance(web, dict) else []
         combined = " ".join((r.get("title", "") + " " + r.get("description", "")) for r in items)
 
-        closed = bool(re.search(r"closed|no.longer|shut.down|defunct", combined, re.IGNORECASE))
+        closed = bool(re.search(r"permanently\s*closed|closed\b|no\s*longer|shut\s*down|defunct", combined, re.IGNORECASE))
         found = bool(items)
 
         return {"found": found, "closed": closed, "last_date": None}
@@ -214,7 +207,7 @@ async def _qwant_signal(name: str) -> dict:
         async with httpx.AsyncClient(timeout=8, headers={"User-Agent": "osm-sg-validator/1.0"}) as client:
             resp = await client.get(
                 "https://api.qwant.com/v3/search/web",
-                params={"q": f"{name} Singapore", "count": 5, "locale": "en_US"},
+                params={"q": f"{name} Singapore open closed", "count": 8, "locale": "en_US"},
             )
             if resp.status_code >= 400:
                 return {"found": False, "closed": False, "last_date": None}
@@ -222,7 +215,7 @@ async def _qwant_signal(name: str) -> dict:
 
         items = data.get("data", {}).get("result", {}).get("items", [])
         combined = " ".join((i.get("title", "") + " " + i.get("desc", "")) for i in items)
-        closed = bool(re.search(r"closed|no.longer|shut.down|defunct", combined, re.IGNORECASE))
+        closed = bool(re.search(r"permanently\s*closed|closed\b|no\s*longer|shut\s*down|defunct", combined, re.IGNORECASE))
         return {"found": bool(items), "closed": closed, "last_date": None}
     except Exception:
         return {"found": False, "closed": False, "last_date": None}

@@ -32,7 +32,7 @@ from app.osm.changeset import submit_osm_changeset
 
 HEATMAP_CACHE = []
 CACHE_DB_PATH = str(Path(__file__).resolve().with_name("cache.db"))
-CACHE_SCHEMA_VERSION = 4
+CACHE_SCHEMA_VERSION = 6
 CONTRADICTIONS_DIR = Path(__file__).resolve().with_name("contradictions")
 CONTRADICTIONS_PATH = CONTRADICTIONS_DIR / "live_contradictions.json"
 load_dotenv(Path(__file__).resolve().with_name(".env"))

@@ -2,7 +2,7 @@
 import httpx
 from datetime import datetime
 
-CDX_API = "http://web.archive.org/cdx/search/cdx"
+CDX_API = "https://web.archive.org/cdx/search/cdx"
 
 
 async def fetch_wayback(website_url: str = None) -> dict:
@@ -30,11 +30,23 @@ async def fetch_wayback(website_url: str = None) -> dict:
             rows = resp.json()
 
         if not rows or len(rows) <= 1:
+            try:
+                async with httpx.AsyncClient(timeout=5) as cl:
+                    probe = await cl.get(f"https://{domain}", follow_redirects=True)
+                    if probe.status_code < 400:
+                        return {
+                            "source": "wayback",
+                            "status": "ACTIVE",
+                            "confidence": 0.55,
+                            "detail": f"Domain {domain} is live (no useful CDX history)",
+                        }
+            except Exception:
+                pass
             return {
                 "source": "wayback",
-                "status": "CLOSED",
-                "confidence": 0.60,
-                "detail": f"Domain {domain} has no successful Wayback crawls"
+                "status": "UNKNOWN",
+                "confidence": 0.25,
+                "detail": f"Domain {domain} has limited crawl data",
             }
 
         data_rows = rows[1:]
