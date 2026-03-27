@@ -18,20 +18,20 @@ import os
 import asyncio
 import httpx
 import psycopg2
-from fastapi import FastAPI
-from dotenv import load_dotenv
-
-from models import VerifyRequest, VerifyResponse, SourceResult
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse
+from app.map_view import generate_map
 from app.sources.geo import get_geo_signal, geocode_nominatim, query_overpass_nearby
 from app.sources.stats import get_staleness_signal, get_neighbourhood_density, load_stats
 from app.sources.gov_data import check_gov_data
 from app.sources.food_platforms import check_food_platforms
 from app.sources.social_signals import check_social_signal
 from app.scorer.weighted_scorer import compute_score, source_input_from_dict
+from dotenv import load_dotenv 
+from app.models import VerifyRequest, VerifyResponse, SourceResult
 import logging
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
 
 load_dotenv()
 
@@ -211,6 +211,10 @@ async def verify(req: VerifyRequest):
 
     #2. Stats signal — try geo meta first, fallback to direct OSM node lookup
     stats_cache = load_stats()
+    edit_age = (geo_result.get("meta") or {}).get("edit_age_days")
+    stats_result = get_staleness_signal(edit_age, None, stats_cache) if edit_age else {
+        "source": "stats", "signal": "unknown", "confidence": 0.1, "detail": "No edit age"
+    }
     edit_age = geo_raw.get("meta", {}).get("edit_age_days") if isinstance(geo_raw.get("meta"), dict) else None
 
     # If geo didn't provide edit age, try direct OSM node lookup
@@ -281,3 +285,39 @@ async def verify(req: VerifyRequest):
             "neighbourhood_density": density,
         },
     )
+
+
+@app.get("/map", response_class=HTMLResponse)
+async def get_map(
+    lat: float = Query(..., description="Latitude"),
+    lon: float = Query(..., description="Longitude"),
+    name: str = Query(None, description="Location name"),
+    osm_node_id: str = Query(..., description="OSM Node ID")
+):
+    try:
+        geo_result = await get_geo_signal(name=name or "Unknown", lat=lat, lon=lon, postal_code="")
+
+        stats_cache = load_stats()
+        edit_age = (geo_result.get("meta") or {}).get("edit_age_days")
+        stats_result = get_staleness_signal(edit_age, None, stats_cache) if edit_age else {
+            "source": "stats", "signal": "unknown", "confidence": 0.1, "detail": "No edit age"
+        }
+
+        result = {
+            "osm_node_id": osm_node_id,
+            "confidence": geo_result.get("confidence", 0),
+            "recommendation": geo_result.get("recommendation", "REVIEW"),
+            "sources": [
+                {"source": "geo", "signal": geo_result.get("signal"),
+                 "confidence": geo_result.get("confidence"), "detail": geo_result.get("detail")},
+                {"source": "stats", "signal": stats_result.get("signal"),
+                 "confidence": stats_result.get("confidence"), "detail": stats_result.get("detail")}
+            ],
+            "narrative": f"Geo: {geo_result.get('detail')} | Stats: {stats_result.get('detail')}"
+        }
+
+        map_html = generate_map(lat, lon, result)
+        return map_html
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
