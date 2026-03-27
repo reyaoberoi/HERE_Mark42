@@ -1,256 +1,346 @@
-"""
-OSM Verifier — main entry point.
-Aggregates all 5 signal sources and fuses them via the weighted scorer.
-
-Sources
--------
-  geo            — OSM Overpass + edit-age + contributor trust   (weight 0.25)
-  gov_data       — NEA/STB licences + Wikidata dissolved flag    (weight 0.30)
-  food_platforms — Burpple / HungryGoWhere live scrape           (weight 0.25)
-  stats          — population-level staleness percentile         (weight 0.10)
-  social_signal  — Reddit SG + DuckDuckGo social presence       (weight 0.10)
-
-Run with:
-  uvicorn main:app --reload
-"""
-
-import os
+# main.py — OSM Singapore POI Freshness Engine
 import asyncio
-import psycopg2
-from fastapi import FastAPI
-from dotenv import load_dotenv
+import hashlib
+import json
+import sqlite3
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
-from models import VerifyRequest, VerifyResponse, SourceResult
-from app.sources.geo import get_geo_signal, geocode_nominatim, query_overpass_nearby
-from app.sources.stats import get_staleness_signal, get_neighbourhood_density, load_stats
-from app.sources.gov_data import check_gov_data
-from app.sources.food_platforms import check_food_platforms
-from app.sources.social_signals import check_social_signal
-from app.scorer.weighted_scorer import compute_score, source_input_from_dict
-import logging
+import httpx
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
-load_dotenv()
+from models import NearbyPlace, SourceSignal, VerifyRequest, VerifyResponse
+from app.sources.geo import fetch_geo
+from app.sources.gov_data import fetch_gov_data
+from app.sources.food_platforms import fetch_food_platforms
+from app.sources.social_signals import fetch_social_signals
+from app.sources.mapillary import fetch_mapillary
+from app.sources.wikidata import fetch_wikidata
+from app.sources.wayback import fetch_wayback
+from app.sources.tripadvisor import fetch_tripadvisor
+from app.sources.singapore_gov_live import fetch_sg_gov_live
+from app.scorer.weighted_scorer import compute_score, build_narrative, generate_changeset_diff
+from app.scorer.stats import get_staleness_context
+from app.osm.nearby import fetch_nearby_places
+from app.osm.changeset import submit_osm_changeset
 
-# ── Logging ─────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    force=True
-)
-logger = logging.getLogger("api")
+HEATMAP_CACHE = []
 
-app = FastAPI(title="OSM Verifier API")
+# ── SQLite result cache ──────────────────────────────────────────────────────
+def _cache_db():
+    conn = sqlite3.connect("cache.db")
+    conn.execute("""CREATE TABLE IF NOT EXISTS verify_cache (
+        key TEXT PRIMARY KEY,
+        result TEXT,
+        created_at TEXT
+    )""")
+    conn.commit()
+    return conn
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
-#Frontend Mount
-app.mount("/static", StaticFiles(directory="../frontend"), name="static")
+def _cache_get(key: str):
+    conn = _cache_db()
+    row = conn.execute(
+        "SELECT result, created_at FROM verify_cache WHERE key=?", (key,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    created = datetime.fromisoformat(row[1])
+    age_h = (datetime.now(timezone.utc) - created.replace(tzinfo=timezone.utc)).total_seconds() / 3600
+    if age_h > 24:
+        return None
+    return json.loads(row[0])
+
+
+def _cache_set(key: str, data: dict):
+    conn = _cache_db()
+    conn.execute(
+        "INSERT OR REPLACE INTO verify_cache VALUES (?,?,?)",
+        (key, json.dumps(data), datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+# ── Score helpers ────────────────────────────────────────────────────────────
+def _current_confidence(signals: list) -> int:
+    """Estimate current confidence from signals gathered so far."""
+    if not signals:
+        return 0
+    actives = sum(1 for s in signals if s.get("status") == "ACTIVE")
+    closeds = sum(1 for s in signals if s.get("status") == "CLOSED")
+    if closeds > actives:
+        return max(0, 100 - closeds * 20)
+    weighted = sum(s.get("confidence", 0) for s in signals if s.get("status") == "ACTIVE")
+    return min(99, int(weighted / max(len(signals), 1) * 130))
+
+
+def _build_summary(
+    name: str, address: str, lat, lon, osm_found: bool,
+    predicted_status: str, confidence: int,
+    confirmed_from: list, recommendation: str,
+    db_detail: str,
+) -> str:
+    coord_str = f"{lat:.4f}, {lon:.4f}" if lat and lon else "unknown"
+    db_str = db_detail if db_detail else ("Found" if osm_found else "Not Found")
+    src_str = ", ".join(confirmed_from) if confirmed_from else "no sources confirmed"
+    return (
+        f"Place Name: {name}\n"
+        f"Address: {address}\n"
+        f"Coordinates: {coord_str}\n"
+        f"Match in Database: {db_str}\n"
+        f"Predicted Status: {predicted_status}\n"
+        f"Confidence: {confidence}%\n"
+        f"Confirmed From: {src_str}\n"
+        f"Recommendation: {recommendation}"
+    )
+
+
+# ── Lifespan ─────────────────────────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        with open("heatmap.json", "r") as f:
+            global HEATMAP_CACHE
+            HEATMAP_CACHE = json.load(f)
+        print(f"Heatmap loaded: {len(HEATMAP_CACHE)} nodes")
+    except FileNotFoundError:
+        print("heatmap.json not found — run build_stats.py first")
+    yield
+
+
+app = FastAPI(title="OSM Singapore POI Freshness Engine", version="1.1.0", lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+try:
+    app.mount("/static", StaticFiles(directory="../frontend"), name="static")
+except Exception:
+    pass
+
 
 @app.get("/", response_class=HTMLResponse)
-@app.get("/tester", response_class=HTMLResponse)
-async def get_tester():
-    with open("../frontend/index.html", "r") as f:
-        return f.read()
-
-
-#Health check
-@app.get("/health")
-def health():
-    db_status = "Disconnected"
-    db_error = None
-    row_count = 0
+async def root():
     try:
-        conn = psycopg2.connect(os.getenv("DATABASE_URL"))
-        with conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM raw_osm_data")
-            row_count = cur.fetchone()[0]
-        conn.close()
-        db_status = "Connected"
-    except Exception as e:
-        db_error = str(e)
+        with open("../frontend/index.html") as f:
+            return HTMLResponse(f.read())
+    except Exception:
+        return HTMLResponse("<h1>OSM SG POI Freshness Engine</h1><p>See <a href='/docs'>/docs</a></p>")
 
-    return {
-        "status": "ok",
-        "database": db_status,
-        "row_count": row_count,
-        "error": db_error,
-        "connection_string": os.getenv("DATABASE_URL"),
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "heatmap_nodes": len(HEATMAP_CACHE)}
+
+
+# ── Main /verify endpoint with early-exit cascading pipeline ─────────────────
+@app.post("/verify", response_model=VerifyResponse)
+async def verify(req: VerifyRequest):
+    cache_key = hashlib.sha256(f"{req.name.lower()}|{req.address.lower()}".encode()).hexdigest()
+    cached = _cache_get(cache_key)
+    if cached:
+        return VerifyResponse(**cached)
+
+    # ── TIER 1: Fast geo resolution (~0.5s) ──────────────────────────────────
+    geo = await fetch_geo(req.name, req.address)
+    lat = geo.get("lat") or 1.3521
+    lon = geo.get("lon") or 103.8198
+    osm_id = geo.get("osm_id")
+    osm_found = geo.get("osm_found", False)
+    edit_age_days = geo.get("edit_age_days")
+    tag_type = geo.get("tag_type", "amenity")
+
+    geo_signal = {
+        "source": "osm_geo",
+        "status": "ACTIVE" if osm_found else "UNKNOWN",
+        "confidence": 0.7 if osm_found else 0.0,
+        "detail": geo.get("detail", ""),
     }
+    signals = [geo_signal]
+
+    early_conf = _current_confidence(signals)
+
+    # ── TIER 2: Fast secondary checks (~2s) ──────────────────────────────────
+    # Always run tier 2 (gov + wikidata + sg_gov_live are fast)
+    t2_results = await asyncio.gather(
+        fetch_gov_data(req.name, lat, lon),
+        fetch_wikidata(req.name, osm_id or ""),
+        fetch_sg_gov_live(req.name, lat, lon),
+        return_exceptions=True,
+    )
+    for r in t2_results:
+        if isinstance(r, dict):
+            signals.append(r)
+
+    early_conf = _current_confidence(signals)
+
+    # ── TIER 3: Slow sources — skip if already confident ─────────────────────
+    # Early exit: if confidence ≥ 85% after Tier 2, skip slow sources
+    if early_conf < 85:
+        t3_results = await asyncio.gather(
+            fetch_food_platforms(req.name, lat, lon),
+            fetch_social_signals(req.name, lat, lon),
+            fetch_wayback(geo.get("website")),
+            fetch_tripadvisor(req.name, lat, lon),
+            fetch_mapillary(lat, lon),
+            return_exceptions=True,
+        )
+        for r in t3_results:
+            if isinstance(r, dict):
+                signals.append(r)
+
+    # ── Score ────────────────────────────────────────────────────────────────
+    staleness = get_staleness_context(osm_id or "", tag_type, lat, lon)
+    score_result = compute_score(signals, staleness)
+    confidence = score_result["confidence"]
+    recommendation = score_result["recommendation"]
+    predicted_status = score_result["predicted_status"]
+    conflict_flag = score_result.get("conflict_flag", False)
+    changeset_diff = generate_changeset_diff(signals, osm_id) if osm_found else None
+    narrative = build_narrative(signals, score_result)
+
+    confirmed_from = [
+        s["source"] for s in signals
+        if s.get("status") == "ACTIVE" and s.get("confidence", 0) > 0.4
+    ]
+
+    # ── Nearby places if confidence low ──────────────────────────────────────
+    nearby = None
+    if confidence < 50 or not osm_found:
+        nearby = await fetch_nearby_places(lat, lon, tag_type, exclude_name=req.name)
+
+    # ── Build summary string ─────────────────────────────────────────────────
+    db_detail = next(
+        (s["detail"] for s in signals if s.get("source") in ("gov_data", "sg_gov_live")
+         and s.get("status") != "UNKNOWN"), None
+    )
+    if not db_detail:
+        db_detail = "Found in OSM" if osm_found else "Not Found in database"
+
+    summary = _build_summary(
+        name=req.name, address=req.address, lat=lat, lon=lon,
+        osm_found=osm_found, predicted_status=predicted_status,
+        confidence=confidence, confirmed_from=confirmed_from,
+        recommendation=recommendation, db_detail=db_detail,
+    )
+
+    source_objs = [
+        SourceSignal(
+            source=s.get("source", "unknown"),
+            status=s.get("status", "UNKNOWN"),
+            confidence=s.get("confidence", 0.0),
+            detail=s.get("detail"),
+            last_activity_date=s.get("last_activity_date"),
+        )
+        for s in signals
+    ]
+
+    result = VerifyResponse(
+        summary=summary,
+        place_name=req.name,
+        address=req.address,
+        lat=lat, lon=lon,
+        osm_id=osm_id,
+        osm_found=osm_found,
+        predicted_status=predicted_status,
+        recommendation=recommendation,
+        confidence=confidence,
+        sources=source_objs,
+        narrative=narrative,
+        conflict_flag=conflict_flag,
+        confirmed_from=confirmed_from,
+        edit_age_days=edit_age_days,
+        neighbourhood_activity_score=staleness.get("neighbourhood_activity_score"),
+        prior_p_active=staleness.get("prior_p_active"),
+        changeset_diff=changeset_diff,
+        nearby_places=nearby,
+        osm_edit_url=f"https://www.openstreetmap.org/node/{osm_id}" if osm_id else None,
+    )
+
+    _cache_set(cache_key, result.model_dump())
+    return result
 
 
-#Searh
+# ── /search endpoint (used by frontend) ─────────────────────────────────────
 @app.get("/search")
 async def search(q: str):
-    """
-    Search for POIs. Tries local PostGIS first (fuzzy), then falls back to Nominatim/Overpass.
-    """
-    logger.info(f"Searching for: {q}")
-    candidates = []
+    NOMINATIM = "https://nominatim.openstreetmap.org/search"
+    OVERPASS = "https://overpass-api.de/api/interpreter"
+    HEADERS = {"User-Agent": "osm-sg-validator/1.0"}
+    SG_BBOX = (1.2, 103.6, 1.5, 104.0)
+    candidates, lat, lon = [], None, None
 
-    # ── 1. Local Search (PostGIS) ───────────────────────────────────────────
-    try:
-        conn = psycopg2.connect(os.getenv("DATABASE_URL"))
-        with conn.cursor() as cur:
-            # Simple ILIKE and trigram similarity search
-            query = """
-                SELECT osm_id, name, ST_Y(geom) as lat, ST_X(geom) as lon, all_tags
-                FROM (
-                    SELECT osm_id, name, geom, 
-                           (to_jsonb(t.*) - 'osm_id' - 'name' - 'geom') as all_tags
-                    FROM raw_osm_data t
-                ) sub
-                WHERE name ILIKE %s 
-                OR name %% %s
-                ORDER BY similarity(name, %s) DESC
-                LIMIT 10
-            """
-            cur.execute(query, (f"%{q}%", q, q))
-            rows = cur.fetchall()
-            for r in rows:
+    async with httpx.AsyncClient(timeout=10, headers=HEADERS) as client:
+        try:
+            resp = await client.get(NOMINATIM, params={
+                "q": f"{q} Singapore", "format": "json",
+                "countrycodes": "sg", "limit": 5,
+            })
+            for hit in resp.json():
+                h_lat, h_lon = float(hit["lat"]), float(hit["lon"])
+                if not (SG_BBOX[0] <= h_lat <= SG_BBOX[2] and SG_BBOX[1] <= h_lon <= SG_BBOX[3]):
+                    continue
+                if lat is None:
+                    lat, lon = h_lat, h_lon
                 candidates.append({
-                    "osm_node_id": str(r[0]),
-                    "name": r[1],
-                    "lat": r[2],
-                    "lon": r[3],
-                    "tags": r[4] or {}
+                    "osm_node_id": str(hit.get("osm_id", "")),
+                    "name": hit.get("display_name", q).split(",")[0],
+                    "lat": h_lat, "lon": h_lon,
+                    "tags": {"type": hit.get("osm_type", "node")},
                 })
-        conn.close()
-        logger.info(f"Local search found {len(candidates)} candidates")
-    except Exception as e:
-        logger.error(f"Local search failed: {e}")
+        except Exception:
+            pass
 
-    # ── 2. Fallback to Nominatim/Overpass if few local results ──────────────
-    if len(candidates) < 3:
-        logger.info("Fewer than 3 local results. Trying external OSM search (Nominatim/Overpass)...")
-        coords = await geocode_nominatim(q)
-        if coords:
-            lat, lon = coords
-            nodes = await query_overpass_nearby(lat, lon, radius=500)
-            for node in nodes:
-                node_id = str(node.get("id"))
-                # Avoid duplicates
-                if not any(c["osm_node_id"] == node_id for c in candidates):
-                    tags = node.get("tags", {})
+        if lat and len(candidates) < 3:
+            try:
+                oq = f"""[out:json][timeout:10];
+                (node(around:300,{lat},{lon})["name"~"{q}",i];
+                 way(around:300,{lat},{lon})["name"~"{q}",i];);out meta 8;"""
+                r2 = await client.post(OVERPASS, data={"data": oq})
+                for el in r2.json().get("elements", []):
+                    tags = el.get("tags", {})
+                    name = tags.get("name", "")
+                    if not name:
+                        continue
+                    node_id = str(el.get("id", ""))
+                    if any(c["osm_node_id"] == node_id for c in candidates):
+                        continue
                     candidates.append({
                         "osm_node_id": node_id,
-                        "name": tags.get("name", "Unknown"),
-                        "lat": node.get("lat"),
-                        "lon": node.get("lon"),
-                        "tags": tags
+                        "name": name,
+                        "lat": el.get("lat", lat),
+                        "lon": el.get("lon", lon),
+                        "tags": tags,
                     })
-            logger.info(f"External search added {len(candidates)} candidates total")
+            except Exception:
+                pass
 
     if not candidates:
         return {"error": f"No candidates found for '{q}'", "candidates": []}
-
-    return {
-        "query": q,
-        "count": len(candidates),
-        "candidates": candidates
-    }
+    return {"query": q, "count": len(candidates), "candidates": candidates, "lat": lat, "lon": lon}
 
 
-#Verify endpoint
-@app.post("/verify", response_model=VerifyResponse)
-async def verify(req: VerifyRequest):
-    """
-    Run all 5 signal sources concurrently and fuse results using the
-    confidence-weighted scorer.
-    """
-    postal_code = req.tags.get("postal_code", "") or req.tags.get("addr:postcode", "")
-    tag_type = next(
-        (req.tags.get(k) for k in ["amenity", "shop", "tourism", "leisure"] if req.tags.get(k)),
-        None,
-    )
+# ── /heatmap-data ────────────────────────────────────────────────────────────
+@app.get("/heatmap-data")
+async def heatmap_data():
+    return {"nodes": HEATMAP_CACHE}
 
-    #1. Run geo + three external sources concurrently
-    logger.info(f"Initiating verification for node {req.osm_node_id} ({req.name})")
-    
-    geo_raw, gov_raw, food_raw, social_raw = await asyncio.gather(
-        get_geo_signal(name=req.name, lat=req.lat, lon=req.lon, postal_code=postal_code),
-        check_gov_data(req.name, postal_code),
-        check_food_platforms(req.name),
-        check_social_signal(req.name),
-        return_exceptions=True,
-    )
 
-    def _safe(result, source_name: str, fallback_signal: str = "unknown") -> dict:
-        """Normalise exceptions to a graceful unknown-signal dict."""
-        if isinstance(result, Exception):
-            logger.error(f"Source {source_name} failed: {result}")
-            return {
-                "source": source_name,
-                "signal": fallback_signal,
-                "confidence": 0.0,
-                "detail": f"Source error: {result}",
-            }
-        logger.info(f"Source {source_name} completed with signal: {result.get('signal')}")
-        return result
+# ── /nearby ──────────────────────────────────────────────────────────────────
+@app.get("/nearby")
+async def nearby_endpoint(lat: float, lon: float, tag: str = "amenity", radius: int = 500):
+    places = await fetch_nearby_places(lat, lon, tag_type=tag, radius_m=radius)
+    return {"places": [p.model_dump() for p in places]}
 
-    geo_raw   = _safe(geo_raw,    "geo")
-    gov_raw   = _safe(gov_raw,    "gov_data")
-    food_raw  = _safe(food_raw,   "food_platforms")
-    social_raw = _safe(social_raw, "social_signal")
 
-    #2. Stats signal
-    stats_cache = load_stats()
-    edit_age = geo_raw.get("meta", {}).get("edit_age_days") if isinstance(geo_raw.get("meta"), dict) else None
-
-    if edit_age is not None:
-        stats_raw = get_staleness_signal(edit_age, tag_type, stats_cache)
-    else:
-        stats_raw = {
-            "source": "stats",
-            "signal": "unknown",
-            "confidence": 0.3,
-            "detail": "No edit age available from geo signal",
-        }
-
-    #3. Neighbourhood density
-    density = get_neighbourhood_density(req.lat, req.lon, stats_cache)
-
-    #4. Weighted scorer
-    all_sources = [geo_raw, gov_raw, food_raw, stats_raw, social_raw]
-    scorer_inputs = [source_input_from_dict(s) for s in all_sources]
-    result = compute_score(scorer_inputs)
-
-    #5. Build response
-    source_results = [
-        SourceResult(
-            source=b["source"],
-            signal=b["signal"],
-            confidence=b["source_confidence"],
-            detail=b.get("detail"),
-        )
-        for b in result.source_breakdown
-    ]
-
-    narrative = (
-        f"{result.narrative} | "
-        f"Area density: {density} nodes/500m cell"
-    )
-
-    return VerifyResponse(
-        osm_node_id=req.osm_node_id,
-        confidence=result.confidence,
-        recommendation=result.recommendation,
-        sources=source_results,
-        narrative=narrative,
-        before_image_url=None,
-        after_image_url=None,
-        changeset_diff={
-            "weighted_score": result.weighted_score,
-            "source_breakdown": result.source_breakdown,
-            "unknown_sources": result.unknown_sources,
-            "neighbourhood_density": density,
-        },
-    )
+# ── /submit-changeset ─────────────────────────────────────────────────────────
+@app.post("/submit-changeset")
+async def submit_changeset(osm_id: str, tags_after: dict):
+    try:
+        url = await submit_osm_changeset(osm_id, tags_after)
+        return {"status": "submitted", "changeset_url": url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -1,0 +1,17 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.env
+*.db
+*.sqlite
+sg_nodes.json
+heatmap.json
+server.log
+server_err.log
+.git
+.gitignore
+*.log
+Notebooks/

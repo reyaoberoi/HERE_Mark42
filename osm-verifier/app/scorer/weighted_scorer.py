@@ -1,274 +1,182 @@
-"""
-Weighted Scorer — fuses signals from gov_data, food_platforms, social_signals.
+# app/scorer/weighted_scorer.py
+from models import SourceSignal
+from typing import List
 
-Signal vocabulary shared by all sources
-    "active"   → POI is operating
-    "closed"   → POI is no longer operating
-    "unknown"  → no usable signal
-
-Source weights (sum = 1.0)
-    gov_data        0.45  — official NEA/STB licences + Wikidata
-    food_platforms  0.35  — Burpple + HungryGoWhere live scrape
-    social_signal   0.20  — Reddit SG + DuckDuckGo presence
-
-Final score is a weighted sum in [-1, +1]:
-    +1 → strongly active
-    -1 → strongly closed
-     0 → no signal
-
-ACCEPT  >=  0.35   (lean active with reasonable confidence)
-REJECT  <= -0.35   (lean closed with reasonable confidence)
-REVIEW  otherwise  (conflicting / low-confidence signals)
-"""
-
-from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import Optional
-
-# ── Source weights (must sum to 1.0) ───────────────────────────────────────
-# gov_data  : official NEA/STB licences + Wikidata  — most authoritative
-# geo       : OSM Overpass + edit-age + contributor trust
-# food_platforms : Burpple / HungryGoWhere live scrape
-# stats     : population-level staleness percentile signal
-# social_signal  : Reddit SG + DuckDuckGo presence
-WEIGHTS: dict[str, float] = {
-    "gov_data":       0.30,
-    "geo":            0.25,
-    "food_platforms": 0.25,
-    "stats":          0.10,
-    "social_signal":  0.10,
+# Likelihood ratios per source when signal = ACTIVE or CLOSED
+LR_TABLE = {
+    "gov_data":       {"ACTIVE": 5.0, "CLOSED": 0.10},
+    "food_platforms": {"ACTIVE": 4.0, "CLOSED": 0.12},
+    "mapillary":      {"ACTIVE": 3.5, "CLOSED": 0.15},
+    "reddit":         {"ACTIVE": 2.5, "CLOSED": 0.40},
+    "wayback":        {"ACTIVE": 2.0, "CLOSED": 0.20},
+    "wikidata":       {"ACTIVE": 1.5, "CLOSED": 0.05},
 }
 
-# Signal → numeric vote
-SIGNAL_VOTE: dict[str, float] = {
-    "active":  +1.0,
-    "closed":  -1.0,
-    "unknown":  0.0,
-}
-
-ACCEPT_THRESHOLD =  0.35
-REJECT_THRESHOLD = -0.35
+HIGH_WEIGHT_SOURCES = {"gov_data", "food_platforms", "mapillary"}
 
 
-@dataclass
-class SourceInput:
-    """Normalised input from one source module."""
-    source: str                # must match a key in WEIGHTS
-    signal: str                # "active" | "closed" | "unknown"
-    confidence: float          # 0.0 – 1.0 (how sure the source is)
-    detail: Optional[str] = None
+def compute_score(geo: dict, stats_ctx: dict, gov: dict, food: dict,
+                  social: dict, mapillary: dict, wikidata: dict, wayback: dict) -> dict:
 
+    prior = stats_ctx.get("prior_p_active", 0.70)
 
-@dataclass
-class ScorerResult:
-    """Output of the weighted scorer."""
-    weighted_score: float          # [-1.0, +1.0]
-    confidence: float              # 0.0 – 1.0  (normalised certainty)
-    recommendation: str            # "ACCEPT" | "REVIEW" | "REJECT"
-    narrative: str
-    source_breakdown: list[dict] = field(default_factory=list)
-    unknown_sources: list[str] = field(default_factory=list)
+    source_map = {
+        "gov_data":      gov,
+        "food_platforms": food,
+        "reddit":        social,
+        "mapillary":     mapillary,
+        "wikidata":      wikidata,
+        "wayback":       wayback,
+    }
 
+    posterior = prior
+    sources_out: List[SourceSignal] = []
+    confirmed_from = []
+    active_high = []
+    closed_high = []
 
-# ── Internal helpers ───────────────────────────────────────────────────────
+    for source_name, result in source_map.items():
+        status = result.get("status", "UNKNOWN")
+        conf   = result.get("confidence", 0.0)
+        detail = result.get("detail", "")
+        lrd    = result.get("last_activity_date")
 
-def _normalised_weight(source: str, effective_confidence: float) -> float:
-    """
-    Returns the base weight for a source scaled by the source's confidence.
-    Sources that return 'unknown' still consume their base weight slot
-    but do not contribute a vote (vote == 0).
-    """
-    return WEIGHTS.get(source, 0.0) * effective_confidence
+        sources_out.append(SourceSignal(
+            source=source_name,
+            status=status,
+            confidence=conf,
+            last_activity_date=lrd,
+            detail=detail,
+        ))
 
+        if status == "UNKNOWN":
+            continue  # LR = 1.0, no update
 
-def _build_narrative(
-    weighted_score: float,
-    recommendation: str,
-    breakdown: list[dict],
-    unknown_sources: list[str],
-) -> str:
-    """Human-readable explanation of the decision."""
-    parts: list[str] = []
+        lr = LR_TABLE.get(source_name, {}).get(status, 1.0)
+        posterior = _lr_update(posterior, lr)
 
-    for b in breakdown:
-        vote_str = "➕ active" if b["vote"] > 0 else ("➖ closed" if b["vote"] < 0 else "⬜ unknown")
-        parts.append(
-            f"[{b['source']}] {vote_str} "
-            f"(conf {b['source_confidence']:.0%}, "
-            f"effective weight {b['effective_weight']:.3f})"
-        )
+        if status == "ACTIVE":
+            confirmed_from.append(source_name)
+            if source_name in HIGH_WEIGHT_SOURCES:
+                active_high.append(source_name)
+        elif status == "CLOSED":
+            if source_name in HIGH_WEIGHT_SOURCES:
+                closed_high.append(source_name)
 
-    if unknown_sources:
-        parts.append(f"No signal from: {', '.join(unknown_sources)}")
+    # Staleness penalty: if edit_age > 730 days, reduce posterior by 15%
+    edit_age = geo.get("edit_age_days", 0) or 0
+    if edit_age > 730:
+        posterior *= 0.85
 
-    verdict_str = {
-        "ACCEPT": "POI appears to be active — accepting map data",
-        "REJECT": "POI appears to be permanently closed — flagging for removal",
-        "REVIEW": "Conflicting or insufficient signals — queuing for human review",
-    }[recommendation]
+    # Conflict detection: high-weight sources disagree
+    conflict_flag = bool(active_high and closed_high)
 
-    return (
-        f"{verdict_str}. "
-        f"Weighted score: {weighted_score:+.3f}. "
-        + " | ".join(parts)
-    )
-
-
-# ── Main entry point ────────────────────────────────────────────────────────
-
-def compute_score(sources: list[SourceInput]) -> ScorerResult:
-    """
-    Fuse signals from one or more SourceInput objects into a single verdict.
-
-    Handles:
-    - Missing sources gracefully (treated as unknown, weight redistributed)
-    - Conflicting signals (active vs closed) → REVIEW
-    - Low total evidence (all unknown) → REVIEW with low confidence
-    - Wikidata-dissolved veto: if gov_data is 'closed' with high confidence
-      it acts as a hard floor pushing the score toward REJECT regardless of
-      other signals.
-
-    Returns a ScorerResult.
-    """
-    source_map: dict[str, SourceInput] = {s.source: s for s in sources}
-
-    # Check for Wikidata veto (gov_data signals closed at high confidence)
-    gov = source_map.get("gov_data")
-    wikidata_veto = (
-        gov is not None
-        and gov.signal == "closed"
-        and gov.confidence >= 0.85
-    )
-
-    weighted_sum = 0.0
-    total_effective_weight = 0.0
-    breakdown: list[dict] = []
-    unknown_sources: list[str] = []
-
-    for source_name, base_weight in WEIGHTS.items():
-        src = source_map.get(source_name)
-
-        if src is None:
-            # Source not provided — treated as unknown, skip contribution
-            unknown_sources.append(source_name)
-            continue
-
-        vote = SIGNAL_VOTE.get(src.signal, 0.0)
-        effective_confidence = max(0.0, min(1.0, src.confidence))
-        effective_weight = base_weight * effective_confidence
-
-        weighted_sum += vote * effective_weight
-        total_effective_weight += effective_weight
-
-        breakdown.append({
-            "source": source_name,
-            "signal": src.signal,
-            "vote": vote,
-            "source_confidence": effective_confidence,
-            "base_weight": base_weight,
-            "effective_weight": round(effective_weight, 4),
-            "detail": src.detail,
-        })
-
-        if src.signal == "unknown":
-            unknown_sources.append(source_name)
-
-    # Normalise score to [-1, +1] relative to maximum possible weight
-    max_possible_weight = sum(WEIGHTS[s] for s in source_map)
-    if max_possible_weight > 0:
-        weighted_score = weighted_sum / max_possible_weight
-    else:
-        weighted_score = 0.0
-
-    # Confidence = fraction of weight that produced a non-unknown signal
-    non_unknown_weight = sum(
-        WEIGHTS[s.source] * s.confidence
-        for s in sources
-        if s.signal != "unknown"
-    )
-    confidence = round(
-        non_unknown_weight / sum(WEIGHTS.values()), 3
-    )
-
-    # Wikidata veto: force toward REJECT
-    if wikidata_veto:
-        weighted_score = min(weighted_score, -0.5)
+    # Convert posterior to 0-100 confidence
+    confidence = int(round(posterior * 100))
+    confidence = max(0, min(100, confidence))
 
     # Recommendation
-    if weighted_score >= ACCEPT_THRESHOLD:
+    if conflict_flag:
+        recommendation = "REVIEW"
+    elif posterior >= 0.78:
         recommendation = "ACCEPT"
-    elif weighted_score <= REJECT_THRESHOLD:
-        recommendation = "REJECT"
+    elif posterior >= 0.42:
+        recommendation = "REVIEW"
     else:
-        recommendation = "REVIEW"
+        recommendation = "REJECT"
 
-    # Edge case: very low confidence overall → escalate to REVIEW
-    if confidence < 0.15 and recommendation != "REJECT":
-        recommendation = "REVIEW"
+    # Predicted status
+    osm_found = geo.get("osm_found", False)
+    if not osm_found and confidence > 50:
+        predicted_status = "New Place"
+    elif confidence < 40:
+        predicted_status = "Recently Closed"
+    elif confidence > 75:
+        predicted_status = "Established"
+    else:
+        predicted_status = "Uncertain"
 
-    narrative = _build_narrative(
-        round(weighted_score, 4),
-        recommendation,
-        breakdown,
-        [s for s in unknown_sources if s in WEIGHTS],  # only real sources
-    )
+    narrative = build_narrative(sources_out, recommendation, confidence, conflict_flag)
 
-    return ScorerResult(
-        weighted_score=round(weighted_score, 4),
-        confidence=confidence,
-        recommendation=recommendation,
-        narrative=narrative,
-        source_breakdown=breakdown,
-        unknown_sources=[s for s in unknown_sources if s in WEIGHTS],
-    )
+    return {
+        "confidence": confidence,
+        "recommendation": recommendation,
+        "predicted_status": predicted_status,
+        "sources": sources_out,
+        "narrative": narrative,
+        "conflict_flag": conflict_flag,
+        "confirmed_from": confirmed_from,
+        "posterior": posterior,
+    }
 
 
-# ── Convenience: build SourceInput from raw source dicts ────────────────────
+def _lr_update(prior: float, lr: float) -> float:
+    """Bayesian LR update: posterior odds = prior odds * LR."""
+    if prior <= 0:
+        return 0.0
+    if prior >= 1:
+        return 1.0
+    prior_odds = prior / (1 - prior)
+    posterior_odds = prior_odds * lr
+    return posterior_odds / (1 + posterior_odds)
 
-def source_input_from_dict(d: dict) -> SourceInput:
+
+def build_narrative(sources: List[SourceSignal], recommendation: str,
+                    confidence: int, conflict_flag: bool) -> str:
     """
-    Convert the raw dict returned by any source module into a SourceInput.
-    The 'source' key must match one of: gov_data, food_platforms, social_signal
+    Deterministic 2-sentence narrative from the top contributing sources.
+    No LLM — pure rule-based template.
     """
-    return SourceInput(
-        source=d.get("source", "unknown"),
-        signal=d.get("signal", "unknown"),
-        confidence=float(d.get("confidence", 0.0)),
-        detail=d.get("detail"),
-    )
+    closed_sources = [s for s in sources if s.status == "CLOSED" and s.detail]
+    active_sources = [s for s in sources if s.status == "ACTIVE" and s.detail]
+
+    if recommendation == "REJECT":
+        top = closed_sources[:2]
+        if top:
+            s1 = top[0].detail
+            s2 = top[1].detail if len(top) > 1 else "No corroborating active signals found."
+            return f"{s1}. {s2}"
+        return f"Multiple signals indicate this place may be permanently closed (confidence: {confidence}%)."
+
+    elif recommendation == "ACCEPT":
+        top = active_sources[:2]
+        if top:
+            s1 = top[0].detail
+            s2 = top[1].detail if len(top) > 1 else "OSM data appears current."
+            return f"{s1}. {s2}"
+        return f"Available signals indicate this place is likely still operating (confidence: {confidence}%)."
+
+    else:  # REVIEW
+        if conflict_flag:
+            a = active_sources[0].detail if active_sources else "Some sources suggest active."
+            c = closed_sources[0].detail if closed_sources else "Some sources suggest closed."
+            return f"Conflicting signals: {a}. However: {c}"
+        return f"Inconclusive evidence (confidence: {confidence}%). Manual verification recommended."
 
 
-# ── Quick test ──────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    # Simulate: gov says active, food platforms say closed, social unknown
-    test_sources = [
-        SourceInput("gov_data",       "active",  0.9,  "NEA licence active"),
-        SourceInput("food_platforms", "closed",  0.85, "Burpple closed badge"),
-        SourceInput("social_signal",  "unknown", 0.1,  "No Reddit posts found"),
-    ]
-    result = compute_score(test_sources)
-    print(f"Score      : {result.weighted_score:+.4f}")
-    print(f"Confidence : {result.confidence:.1%}")
-    print(f"Verdict    : {result.recommendation}")
-    print(f"Narrative  : {result.narrative}")
-    print()
+def generate_changeset_diff(geo: dict) -> dict:
+    """Generate the disused: OSM tag transformation."""
+    original_tags = geo.get("tags", {})
+    skip_keys = {"source", "note", "disused", "disused:shop", "disused:amenity",
+                 "disused:tourism", "disused:leisure"}
 
-    # Simulate: all agree it's active
-    test_sources_2 = [
-        SourceInput("gov_data",       "active", 0.9, "NEA licence valid"),
-        SourceInput("food_platforms", "active", 0.7, "Recent Burpple activity"),
-        SourceInput("social_signal",  "active", 0.6, "Reddit post 1 month ago"),
-    ]
-    result2 = compute_score(test_sources_2)
-    print(f"Score      : {result2.weighted_score:+.4f}")
-    print(f"Confidence : {result2.confidence:.1%}")
-    print(f"Verdict    : {result2.recommendation}")
+    tags_after = {}
+    for k, v in original_tags.items():
+        if k in skip_keys:
+            tags_after[k] = v
+        elif k in ("shop", "amenity", "tourism", "leisure", "name", "addr:street",
+                   "addr:city", "addr:postcode", "opening_hours", "website",
+                   "phone", "contact:website", "contact:phone"):
+            tags_after[f"disused:{k}"] = v
+        else:
+            tags_after[k] = v
 
-    # Simulate: Wikidata dissolved (hard veto)
-    test_sources_3 = [
-        SourceInput("gov_data",       "closed", 0.95, "Wikidata dissolved 2023"),
-        SourceInput("food_platforms", "active", 0.6,  "Old Burpple listing"),
-        SourceInput("social_signal",  "unknown", 0.1, "No Reddit"),
-    ]
-    result3 = compute_score(test_sources_3)
-    print(f"\nVeto test  : {result3.recommendation}  (score {result3.weighted_score:+.4f})")
+    tags_after["disused"] = "yes"
+    tags_after["note"] = "Automatically flagged as likely closed by osm-sg-validator"
+
+    return {
+        "before": original_tags,
+        "after": tags_after,
+        "osm_id": geo.get("osm_id"),
+        "osm_type": geo.get("osm_type", "node"),
+    }
