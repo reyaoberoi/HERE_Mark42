@@ -76,3 +76,455 @@ INFO:     Finished server process [26584]
 INFO:     Started server process [17276]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'app\sources\geo.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for connections to close. (CTRL+C to force quit)
+Task exception was never retrieved
+future: <Task finished name='Task-16' coro=<Connection.run() done, defined at C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_connection.py:305> exception=NotImplementedError()>
+Traceback (most recent call last):
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_connection.py", line 312, in run
+    await self._transport.connect()
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_transport.py", line 133, in connect
+    raise exc
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_transport.py", line 120, in connect
+    self._proc = await asyncio.create_subprocess_exec(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\subprocess.py", line 224, in create_subprocess_exec
+    transport, protocol = await loop.subprocess_exec(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        stderr=stderr, **kwds)
+        ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 1798, in subprocess_exec
+    transport = await self._make_subprocess_transport(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        protocol, popen_args, False, stdin, stdout, stderr,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        bufsize, **kwargs)
+        ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 533, in _make_subprocess_transport
+    raise NotImplementedError
+NotImplementedError
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\uvicorn\protocols\http\h11_impl.py", line 410, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self.scope, self.receive, self.send
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\uvicorn\middleware\proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\fastapi\applications.py", line 1159, in __call__
+    await super().__call__(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\applications.py", line 90, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\middleware\errors.py", line 186, in __call__
+    raise exc
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\middleware\errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\middleware\cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\middleware\exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\fastapi\middleware\asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\routing.py", line 680, in app
+    await route.handle(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\fastapi\routing.py", line 134, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\fastapi\routing.py", line 120, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\fastapi\routing.py", line 674, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\fastapi\routing.py", line 328, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\main.py", line 197, in verify
+    score_result = compute_score(signals, staleness)
+TypeError: compute_score() missing 6 required positional arguments: 'gov', 'food', 'social', 'mapillary', 'wikidata', and 'wayback'
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [17276]
+INFO:     Started server process [15636]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+Task exception was never retrieved
+future: <Task finished name='Task-16' coro=<Connection.run() done, defined at C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_connection.py:305> exception=NotImplementedError()>
+Traceback (most recent call last):
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_connection.py", line 312, in run
+    await self._transport.connect()
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_transport.py", line 133, in connect
+    raise exc
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_transport.py", line 120, in connect
+    self._proc = await asyncio.create_subprocess_exec(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\subprocess.py", line 224, in create_subprocess_exec
+    transport, protocol = await loop.subprocess_exec(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        stderr=stderr, **kwds)
+        ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 1798, in subprocess_exec
+    transport = await self._make_subprocess_transport(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        protocol, popen_args, False, stdin, stdout, stderr,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        bufsize, **kwargs)
+        ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 533, in _make_subprocess_transport
+    raise NotImplementedError
+NotImplementedError
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\uvicorn\protocols\http\h11_impl.py", line 410, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self.scope, self.receive, self.send
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\uvicorn\middleware\proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\fastapi\applications.py", line 1159, in __call__
+    await super().__call__(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\applications.py", line 90, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\middleware\errors.py", line 186, in __call__
+    raise exc
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\middleware\errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\middleware\cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\middleware\exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\fastapi\middleware\asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\routing.py", line 680, in app
+    await route.handle(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\fastapi\routing.py", line 134, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\fastapi\routing.py", line 120, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\fastapi\routing.py", line 674, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\fastapi\routing.py", line 328, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\main.py", line 197, in verify
+    score_result = compute_score(signals, staleness)
+TypeError: compute_score() missing 6 required positional arguments: 'gov', 'food', 'social', 'mapillary', 'wikidata', and 'wayback'
+WARNING:  StatReload detected changes in 'main.py'. Reloading...
+Task exception was never retrieved
+future: <Task finished name='Task-30' coro=<Connection.run() done, defined at C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_connection.py:305> exception=NotImplementedError()>
+Traceback (most recent call last):
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_connection.py", line 312, in run
+    await self._transport.connect()
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_transport.py", line 133, in connect
+    raise exc
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_transport.py", line 120, in connect
+    self._proc = await asyncio.create_subprocess_exec(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\subprocess.py", line 224, in create_subprocess_exec
+    transport, protocol = await loop.subprocess_exec(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        stderr=stderr, **kwds)
+        ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 1798, in subprocess_exec
+    transport = await self._make_subprocess_transport(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        protocol, popen_args, False, stdin, stdout, stderr,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        bufsize, **kwargs)
+        ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 533, in _make_subprocess_transport
+    raise NotImplementedError
+NotImplementedError
+INFO:     Shutting down
+INFO:     Waiting for connections to close. (CTRL+C to force quit)
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\uvicorn\protocols\http\h11_impl.py", line 410, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self.scope, self.receive, self.send
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\uvicorn\middleware\proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\fastapi\applications.py", line 1159, in __call__
+    await super().__call__(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\applications.py", line 90, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\middleware\errors.py", line 186, in __call__
+    raise exc
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\middleware\errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\middleware\cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\middleware\exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\fastapi\middleware\asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\routing.py", line 680, in app
+    await route.handle(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\fastapi\routing.py", line 134, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\fastapi\routing.py", line 120, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\fastapi\routing.py", line 674, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\fastapi\routing.py", line 328, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\main.py", line 197, in verify
+TypeError: compute_score() missing 6 required positional arguments: 'gov', 'food', 'social', 'mapillary', 'wikidata', and 'wayback'
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [15636]
+INFO:     Started server process [14660]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+Task exception was never retrieved
+future: <Task finished name='Task-16' coro=<Connection.run() done, defined at C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_connection.py:305> exception=NotImplementedError()>
+Traceback (most recent call last):
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_connection.py", line 312, in run
+    await self._transport.connect()
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_transport.py", line 133, in connect
+    raise exc
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_transport.py", line 120, in connect
+    self._proc = await asyncio.create_subprocess_exec(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\subprocess.py", line 224, in create_subprocess_exec
+    transport, protocol = await loop.subprocess_exec(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        stderr=stderr, **kwds)
+        ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 1798, in subprocess_exec
+    transport = await self._make_subprocess_transport(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        protocol, popen_args, False, stdin, stdout, stderr,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        bufsize, **kwargs)
+        ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 533, in _make_subprocess_transport
+    raise NotImplementedError
+NotImplementedError
+WARNING:  StatReload detected changes in 'main.py'. Reloading...
+Task exception was never retrieved
+future: <Task finished name='Task-38' coro=<Connection.run() done, defined at C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_connection.py:305> exception=NotImplementedError()>
+Traceback (most recent call last):
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_connection.py", line 312, in run
+    await self._transport.connect()
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_transport.py", line 133, in connect
+    raise exc
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_transport.py", line 120, in connect
+    self._proc = await asyncio.create_subprocess_exec(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\subprocess.py", line 224, in create_subprocess_exec
+    transport, protocol = await loop.subprocess_exec(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        stderr=stderr, **kwds)
+        ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 1798, in subprocess_exec
+    transport = await self._make_subprocess_transport(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        protocol, popen_args, False, stdin, stdout, stderr,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        bufsize, **kwargs)
+        ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 533, in _make_subprocess_transport
+    raise NotImplementedError
+NotImplementedError
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [14660]
+INFO:     Started server process [16528]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'app\sources\geo.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for connections to close. (CTRL+C to force quit)
+Task exception was never retrieved
+future: <Task finished name='Task-20' coro=<Connection.run() done, defined at C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_connection.py:305> exception=NotImplementedError()>
+Traceback (most recent call last):
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_connection.py", line 312, in run
+    await self._transport.connect()
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_transport.py", line 133, in connect
+    raise exc
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_transport.py", line 120, in connect
+    self._proc = await asyncio.create_subprocess_exec(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\subprocess.py", line 224, in create_subprocess_exec
+    transport, protocol = await loop.subprocess_exec(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        stderr=stderr, **kwds)
+        ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 1798, in subprocess_exec
+    transport = await self._make_subprocess_transport(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        protocol, popen_args, False, stdin, stdout, stderr,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        bufsize, **kwargs)
+        ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 533, in _make_subprocess_transport
+    raise NotImplementedError
+NotImplementedError
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [16528]
+INFO:     Started server process [14740]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'app\scorer\weighted_scorer.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for connections to close. (CTRL+C to force quit)
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [14740]
+INFO:     Started server process [12380]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'main.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [12380]
+INFO:     Started server process [14800]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'main.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [14800]
+INFO:     Started server process [32688]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+Task exception was never retrieved
+future: <Task finished name='Task-16' coro=<Connection.run() done, defined at C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_connection.py:305> exception=NotImplementedError()>
+Traceback (most recent call last):
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_connection.py", line 312, in run
+    await self._transport.connect()
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_transport.py", line 133, in connect
+    raise exc
+  File "C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\playwright\_impl\_transport.py", line 120, in connect
+    self._proc = await asyncio.create_subprocess_exec(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\subprocess.py", line 224, in create_subprocess_exec
+    transport, protocol = await loop.subprocess_exec(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        stderr=stderr, **kwds)
+        ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 1798, in subprocess_exec
+    transport = await self._make_subprocess_transport(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        protocol, popen_args, False, stdin, stdout, stderr,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        bufsize, **kwargs)
+        ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Ayush Manoj Garg\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 533, in _make_subprocess_transport
+    raise NotImplementedError
+NotImplementedError
+WARNING:  StatReload detected changes in 'app\sources\gov_data.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [32688]
+<frozen importlib._bootstrap>:491: Warning: Numpy built with MINGW-W64 on Windows 64 bits is experimental, and only available for 
+testing. You are advised not to use it for production. 
+
+CRASHES ARE TO BE EXPECTED - PLEASE REPORT THEM TO NUMPY DEVELOPERS
+C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\numpy\core\getlimits.py:225: RuntimeWarning: invalid value encountered in exp2
+  epsneg_f128 = exp2(ld(-113))
+C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\numpy\core\getlimits.py:226: RuntimeWarning: invalid value encountered in exp2
+  tiny_f128 = exp2(ld(-16382))
+C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\numpy\core\getlimits.py:240: RuntimeWarning: invalid value encountered in exp2
+  eps=exp2(ld(-112)),
+C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\numpy\core\getlimits.py:41: RuntimeWarning: invalid value encountered in nextafter
+  self._smallest_subnormal = nextafter(
+C:\Users\Ayush Manoj Garg\OneDrive\Desktop\mpstme\here tech hackathon\HERE_Mark42\osm-verifier\venv\Lib\site-packages\numpy\core\getlimits.py:52: RuntimeWarning: invalid value encountered in log10
+  self.precision = int(-log10(self.eps))

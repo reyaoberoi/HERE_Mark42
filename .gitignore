@@ -1,11 +1,26 @@
+# Virtual environments
 /venv
-__pycache__/
-.env
-*.pyc
-/venv
-README.md
+venv/
 
+#data
+/Data
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment variables
+.env
+.env.local
+
+# Build logs
+build_err.log
+build_out.log
+
+# Large geospatial files
 malaysia-singapore-brunei.gpkg
 *.gpkg
+
+# Generated data
 sg_stats.json
-venv

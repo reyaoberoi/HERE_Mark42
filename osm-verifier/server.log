@@ -1,3 +1,48 @@
 Heatmap loaded: 34792 nodes
 INFO:     127.0.0.1:55345 - "POST /verify HTTP/1.1" 500 Internal Server Error
- 
+  Heatmap loaded: 34792 nodes
+INFO:     127.0.0.1:57200 - "POST /verify HTTP/1.1" 500 Internal Server Error
+Heatmap loaded: 34792 nodes
+INFO:     127.0.0.1:63005 - "POST /verify HTTP/1.1" 500 Internal Server Error
+ INFO:     127.0.0.1:54649 - "POST /verify HTTP/1.1" 500 Internal Server Error
+Heatmap loaded: 34792 nodes
+INFO:     127.0.0.1:50692 - "POST /verify HTTP/1.1" 200 OK
+ INFO:     127.0.0.1:59796 - "GET /search?q=Maxwell+Food+Centre HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56931 - "GET /heatmap-data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56938 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58619 - "GET /search?q=Maxwell+Food+Centre HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58624 - "POST /verify HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58299 - "POST /verify HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58301 - "POST /verify HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58303 - "GET /search?q=Maxwell+Food+Centre HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52419 - "POST /verify HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52421 - "POST /verify HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52423 - "POST /verify HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59647 - "POST /verify HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54220 - "POST /verify HTTP/1.1" 200 OK
+Heatmap loaded: 34792 nodes
+INFO:     127.0.0.1:61587 - "GET /search?q=Lau+Pa+Sat HTTP/1.1" 200 OK
+ INFO:     127.0.0.1:52220 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51795 - "POST /verify HTTP/1.1" 200 OK
+ Heatmap loaded: 34792 nodes
+INFO:     127.0.0.1:56155 - "POST /verify HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61860 - "GET /search?q=Maxwell+Food+Centre HTTP/1.1" 200 OK
+Heatmap loaded: 34792 nodes
+INFO:     127.0.0.1:58960 - "GET /heatmap-data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60116 - "POST /verify HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60119 - "GET /search?q=Maxwell+Food+Centre HTTP/1.1" 200 OK
+ INFO:     127.0.0.1:63854 - "POST /verify HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52233 - "POST /verify HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52234 - "GET /search?q=Maxwell+Food+Centre HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61296 - "GET /heatmap-data HTTP/1.1" 200 OK
+ Heatmap loaded: 34792 nodes
+INFO:     127.0.0.1:60901 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60901 - "GET /heatmap-data HTTP/1.1" 200 OK
+Heatmap loaded: 34792 nodes
+INFO:     127.0.0.1:60052 - "POST /verify HTTP/1.1" 200 OK
+ INFO:     127.0.0.1:54060 - "GET /data-sources HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:53164 - "GET /heatmap-data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52557 - "POST /verify HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52813 - "GET /data-sources HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:50644 - "GET /heatmap-data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56471 - "GET /openapi.json HTTP/1.1" 200 OK

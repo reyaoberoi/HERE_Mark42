@@ -1,0 +1,32 @@
+[
+  {
+    "name": "Lau Pa Sat",
+    "address": "18 Raffles Quay Singapore",
+    "expected_status": "Established",
+    "expected_recommendation": "ACCEPT"
+  },
+  {
+    "name": "Maxwell Food Centre",
+    "address": "1 Kadayanallur St Singapore",
+    "expected_status": "Established",
+    "expected_recommendation": "ACCEPT"
+  },
+  {
+    "name": "Old Airport Road Food Centre",
+    "address": "51 Old Airport Rd Singapore",
+    "expected_status": "Established",
+    "expected_recommendation": "ACCEPT"
+  },
+  {
+    "name": "Imaginary Closed Test Cafe",
+    "address": "100 Test Street Singapore",
+    "expected_status": "Recently Closed",
+    "expected_recommendation": "REJECT"
+  },
+  {
+    "name": "Tiong Bahru Market",
+    "address": "30 Seng Poh Rd Singapore",
+    "expected_status": "Established",
+    "expected_recommendation": "ACCEPT"
+  }
+]

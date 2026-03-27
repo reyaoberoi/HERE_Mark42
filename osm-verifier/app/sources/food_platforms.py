@@ -1,9 +1,16 @@
 # app/sources/food_platforms.py
 import asyncio
+import os
 import re
 from datetime import datetime
 from typing import Optional
 import httpx
+
+try:
+    from brave import AsyncBrave
+    BRAVE_WRAPPER_OK = True
+except Exception:
+    BRAVE_WRAPPER_OK = False
 
 # Try to import playwright — degrade gracefully if not installed
 try:
@@ -20,41 +27,39 @@ except ImportError:
 
 
 async def fetch_food_platforms(name: str, lat: float, lon: float) -> dict:
-    """
-    Scrape Burpple and HungryGoWhere for last activity date and closed badge.
-    Uses DuckDuckGo Instant as a fast first-pass fallback.
-    Falls back gracefully — never raises.
-    """
     tasks = [
         _scrape_burpple(name),
         _scrape_hungrygowhere(name),
-        _duckduckgo_signal(name),
+        _brave_signal(name),
+        _qwant_signal(name),
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    burpple, hungry, ddg = [r if isinstance(r, dict) else {} for r in results]
+    burpple, hungry, brave, qwant = [r if isinstance(r, dict) else {} for r in results]
 
     # Merge: prefer the most recent date and most definitive status
     all_dates = [
         burpple.get("last_date"),
         hungry.get("last_date"),
-        ddg.get("last_date"),
+        brave.get("last_date"),
+        qwant.get("last_date"),
     ]
     all_dates = [d for d in all_dates if d]
 
     closed_signals = [
         burpple.get("closed", False),
         hungry.get("closed", False),
-        ddg.get("closed", False),
+        brave.get("closed", False),
+        qwant.get("closed", False),
     ]
 
-    found_anywhere = any([burpple.get("found"), hungry.get("found"), ddg.get("found")])
+    found_anywhere = any([burpple.get("found"), hungry.get("found"), brave.get("found"), qwant.get("found")])
 
     if not found_anywhere:
         return {
             "source": "food_platforms",
             "status": "UNKNOWN",
             "confidence": 0.0,
-            "detail": f"'{name}' not found on Burpple, HungryGoWhere, or DuckDuckGo"
+            "detail": f"'{name}' not found on Burpple, HungryGoWhere, Brave, or Qwant"
         }
 
     # If any source says closed definitively
@@ -183,22 +188,41 @@ async def _scrape_hungrygowhere(name: str) -> dict:
         return {"found": False, "closed": False, "last_date": None}
 
 
-async def _duckduckgo_signal(name: str) -> dict:
-    """DuckDuckGo Instant Answer API — no key needed."""
+async def _brave_signal(name: str) -> dict:
+    api_key = os.getenv("BRAVE_SEARCH_API_KEY", "").strip() or os.getenv("BRAVE_API_KEY", "").strip()
+    if not api_key or not BRAVE_WRAPPER_OK:
+        return {"found": False, "closed": False, "last_date": None}
+
     try:
-        async with httpx.AsyncClient(timeout=8) as client:
+        brave = AsyncBrave(api_key=api_key)
+        results = await brave.search(q=f"{name} Singapore restaurant", count=5, raw=True)
+        web = (results or {}).get("web", {})
+        items = web.get("results", []) if isinstance(web, dict) else []
+        combined = " ".join((r.get("title", "") + " " + r.get("description", "")) for r in items)
+
+        closed = bool(re.search(r"closed|no.longer|shut.down|defunct", combined, re.IGNORECASE))
+        found = bool(items)
+
+        return {"found": found, "closed": closed, "last_date": None}
+    except Exception:
+        return {"found": False, "closed": False, "last_date": None}
+
+
+async def _qwant_signal(name: str) -> dict:
+    """Qwant public search fallback (non-Google/non-Microsoft)."""
+    try:
+        async with httpx.AsyncClient(timeout=8, headers={"User-Agent": "osm-sg-validator/1.0"}) as client:
             resp = await client.get(
-                "https://api.duckduckgo.com/",
-                params={"q": f"{name} Singapore restaurant", "format": "json", "no_redirect": "1"}
+                "https://api.qwant.com/v3/search/web",
+                params={"q": f"{name} Singapore", "count": 5, "locale": "en_US"},
             )
+            if resp.status_code >= 400:
+                return {"found": False, "closed": False, "last_date": None}
             data = resp.json()
-            abstract = data.get("AbstractText", "")
-            answer = data.get("Answer", "")
-            combined = abstract + " " + answer
 
-            closed = bool(re.search(r"closed|no.longer|shut.down|defunct", combined, re.IGNORECASE))
-            found = bool(abstract or answer)
-
-            return {"found": found, "closed": closed, "last_date": None}
+        items = data.get("data", {}).get("result", {}).get("items", [])
+        combined = " ".join((i.get("title", "") + " " + i.get("desc", "")) for i in items)
+        closed = bool(re.search(r"closed|no.longer|shut.down|defunct", combined, re.IGNORECASE))
+        return {"found": bool(items), "closed": closed, "last_date": None}
     except Exception:
         return {"found": False, "closed": False, "last_date": None}

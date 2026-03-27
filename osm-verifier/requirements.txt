@@ -13,3 +13,4 @@ scikit-image>=0.23.2
 numpy>=1.26.4
 requests>=2.31.0
 aiohttp>=3.9.5
+brave-search==0.1.8

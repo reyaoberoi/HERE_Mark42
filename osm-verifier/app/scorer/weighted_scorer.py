@@ -1,97 +1,144 @@
 # app/scorer/weighted_scorer.py
-from models import SourceSignal
-from typing import List
+import math
+from typing import Dict, List
 
-# Likelihood ratios per source when signal = ACTIVE or CLOSED
-LR_TABLE = {
-    "gov_data":       {"ACTIVE": 5.0, "CLOSED": 0.10},
-    "food_platforms": {"ACTIVE": 4.0, "CLOSED": 0.12},
-    "mapillary":      {"ACTIVE": 3.5, "CLOSED": 0.15},
-    "reddit":         {"ACTIVE": 2.5, "CLOSED": 0.40},
-    "wayback":        {"ACTIVE": 2.0, "CLOSED": 0.20},
-    "wikidata":       {"ACTIVE": 1.5, "CLOSED": 0.05},
+from models import SourceSignal
+
+SOURCE_WEIGHT = {
+    "osm_geo": 0.80,
+    "gov_data": 1.35,
+    "sg_gov_live": 1.40,
+    "food_platforms": 1.15,
+    "tripadvisor": 0.90,
+    "mapillary": 1.20,
+    "reddit": 0.65,
+    "wayback": 0.85,
+    "wikidata": 0.95,
 }
 
-HIGH_WEIGHT_SOURCES = {"gov_data", "food_platforms", "mapillary"}
+STATUS_SIGN = {"ACTIVE": 1.0, "CLOSED": -1.0, "UNKNOWN": 0.0}
+HIGH_WEIGHT_SOURCES = {"gov_data", "sg_gov_live", "food_platforms", "mapillary"}
 
 
-def compute_score(geo: dict, stats_ctx: dict, gov: dict, food: dict,
-                  social: dict, mapillary: dict, wikidata: dict, wayback: dict) -> dict:
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
 
-    prior = stats_ctx.get("prior_p_active", 0.70)
 
-    source_map = {
-        "gov_data":      gov,
-        "food_platforms": food,
-        "reddit":        social,
-        "mapillary":     mapillary,
-        "wikidata":      wikidata,
-        "wayback":       wayback,
+def _logit(p: float) -> float:
+    p = _clamp(p, 0.001, 0.999)
+    return math.log(p / (1 - p))
+
+
+def _sigmoid(x: float) -> float:
+    return 1.0 / (1.0 + math.exp(-x))
+
+
+def _norm_status(raw: str) -> str:
+    up = (raw or "UNKNOWN").upper()
+    return up if up in STATUS_SIGN else "UNKNOWN"
+
+
+def compute_score(
+    geo: dict,
+    stats_ctx: dict,
+    gov: dict,
+    food: dict,
+    social: dict,
+    mapillary: dict,
+    wikidata: dict,
+    wayback: dict,
+    sg_gov_live: dict | None = None,
+    tripadvisor: dict | None = None,
+) -> dict:
+    prior = float(stats_ctx.get("prior_p_active", 0.70) or 0.70)
+    source_map: Dict[str, dict] = {
+        "osm_geo": {
+            "status": "ACTIVE" if geo.get("osm_found") else "UNKNOWN",
+            "confidence": 0.55 if geo.get("osm_found") else 0.0,
+            "detail": "OSM geocoding matched candidate" if geo.get("osm_found") else "No OSM geo match",
+            "last_activity_date": None,
+        },
+        "gov_data": gov or {},
+        "sg_gov_live": sg_gov_live or {},
+        "food_platforms": food or {},
+        "tripadvisor": tripadvisor or {},
+        "reddit": social or {},
+        "mapillary": mapillary or {},
+        "wikidata": wikidata or {},
+        "wayback": wayback or {},
     }
 
-    posterior = prior
     sources_out: List[SourceSignal] = []
-    confirmed_from = []
-    active_high = []
-    closed_high = []
+    considered_sources: List[str] = []
+    active_sources: List[str] = []
+    closure_sources: List[str] = []
+    active_high: List[str] = []
+    closed_high: List[str] = []
 
+    evidence_sum = 0.0
     for source_name, result in source_map.items():
-        status = result.get("status", "UNKNOWN")
-        conf   = result.get("confidence", 0.0)
-        detail = result.get("detail", "")
-        lrd    = result.get("last_activity_date")
+        status = _norm_status(result.get("status", "UNKNOWN"))
+        conf = _clamp(float(result.get("confidence", 0.0) or 0.0), 0.0, 1.0)
+        detail = (result.get("detail") or "").strip()
+        last_activity_date = result.get("last_activity_date")
 
-        sources_out.append(SourceSignal(
-            source=source_name,
-            status=status,
-            confidence=conf,
-            last_activity_date=lrd,
-            detail=detail,
-        ))
+        sources_out.append(
+            SourceSignal(
+                source=source_name,
+                status=status,
+                confidence=conf,
+                last_activity_date=last_activity_date,
+                detail=detail,
+            )
+        )
 
-        if status == "UNKNOWN":
-            continue  # LR = 1.0, no update
+        if status != "UNKNOWN" or detail:
+            considered_sources.append(source_name)
 
-        lr = LR_TABLE.get(source_name, {}).get(status, 1.0)
-        posterior = _lr_update(posterior, lr)
+        sign = STATUS_SIGN.get(status, 0.0)
+        if sign == 0.0:
+            continue
+
+        calibrated_conf = 0.35 + 0.65 * conf
+        weighted_contrib = sign * SOURCE_WEIGHT.get(source_name, 0.7) * calibrated_conf
+        evidence_sum += weighted_contrib
 
         if status == "ACTIVE":
-            confirmed_from.append(source_name)
+            active_sources.append(source_name)
             if source_name in HIGH_WEIGHT_SOURCES:
                 active_high.append(source_name)
         elif status == "CLOSED":
+            closure_sources.append(source_name)
             if source_name in HIGH_WEIGHT_SOURCES:
                 closed_high.append(source_name)
 
-    # Staleness penalty: if edit_age > 730 days, reduce posterior by 15%
-    edit_age = geo.get("edit_age_days", 0) or 0
-    if edit_age > 730:
-        posterior *= 0.85
+    # Geographic and freshness priors improve stability for sparse signals.
+    geo_bias = 0.18 if geo.get("osm_found") else -0.12
+    edit_age = int(geo.get("edit_age_days", 0) or 0)
+    age_penalty = _clamp(edit_age / 3650.0, 0.0, 0.55)
 
-    # Conflict detection: high-weight sources disagree
+    posterior = _sigmoid(_logit(prior) + 1.08 * evidence_sum + geo_bias - age_penalty)
+
     conflict_flag = bool(active_high and closed_high)
+    if conflict_flag:
+        posterior = 0.5 + (posterior - 0.5) * 0.45
 
-    # Convert posterior to 0-100 confidence
-    confidence = int(round(posterior * 100))
-    confidence = max(0, min(100, confidence))
+    confidence = int(round(_clamp(posterior, 0.0, 1.0) * 100))
 
-    # Recommendation
     if conflict_flag:
         recommendation = "REVIEW"
-    elif posterior >= 0.78:
+    elif posterior >= 0.72:
         recommendation = "ACCEPT"
-    elif posterior >= 0.42:
-        recommendation = "REVIEW"
-    else:
+    elif posterior <= 0.38 and closure_sources:
         recommendation = "REJECT"
+    else:
+        recommendation = "REVIEW"
 
-    # Predicted status
-    osm_found = geo.get("osm_found", False)
-    if not osm_found and confidence > 50:
+    if not geo.get("osm_found") and posterior >= 0.55:
         predicted_status = "New Place"
-    elif confidence < 40:
+    elif posterior <= 0.40:
         predicted_status = "Recently Closed"
-    elif confidence > 75:
+    elif posterior >= 0.72:
         predicted_status = "Established"
     else:
         predicted_status = "Uncertain"
@@ -105,20 +152,11 @@ def compute_score(geo: dict, stats_ctx: dict, gov: dict, food: dict,
         "sources": sources_out,
         "narrative": narrative,
         "conflict_flag": conflict_flag,
-        "confirmed_from": confirmed_from,
         "posterior": posterior,
+        "considered_sources": considered_sources,
+        "active_sources": active_sources,
+        "closure_sources": closure_sources,
     }
-
-
-def _lr_update(prior: float, lr: float) -> float:
-    """Bayesian LR update: posterior odds = prior odds * LR."""
-    if prior <= 0:
-        return 0.0
-    if prior >= 1:
-        return 1.0
-    prior_odds = prior / (1 - prior)
-    posterior_odds = prior_odds * lr
-    return posterior_odds / (1 + posterior_odds)
 
 
 def build_narrative(sources: List[SourceSignal], recommendation: str,

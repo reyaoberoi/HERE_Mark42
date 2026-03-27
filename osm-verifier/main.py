@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import json
 import sqlite3
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from dotenv import load_dotenv
 
 from models import NearbyPlace, SourceSignal, VerifyRequest, VerifyResponse
 from app.sources.geo import fetch_geo
@@ -23,15 +25,16 @@ from app.sources.wikidata import fetch_wikidata
 from app.sources.wayback import fetch_wayback
 from app.sources.tripadvisor import fetch_tripadvisor
 from app.sources.singapore_gov_live import fetch_sg_gov_live
-from app.scorer.weighted_scorer import compute_score, build_narrative, generate_changeset_diff
+from app.scorer.weighted_scorer import compute_score, generate_changeset_diff
 from app.scorer.stats import get_staleness_context
 from app.osm.nearby import fetch_nearby_places
 from app.osm.changeset import submit_osm_changeset
 
 HEATMAP_CACHE = []
 CACHE_DB_PATH = str(Path(__file__).resolve().with_name("cache.db"))
+CACHE_SCHEMA_VERSION = 2
+load_dotenv(Path(__file__).resolve().with_name(".env"))
 
-# ── SQLite result cache ──────────────────────────────────────────────────────
 def _cache_db():
     conn = sqlite3.connect(CACHE_DB_PATH)
     conn.execute("""CREATE TABLE IF NOT EXISTS verify_cache (
@@ -59,16 +62,17 @@ def _cache_get(key: str):
 
 
 def _cache_set(key: str, data: dict):
+    payload = dict(data)
+    payload["__schema_version"] = CACHE_SCHEMA_VERSION
     conn = _cache_db()
     conn.execute(
         "INSERT OR REPLACE INTO verify_cache VALUES (?,?,?)",
-        (key, json.dumps(data), datetime.now(timezone.utc).isoformat()),
+        (key, json.dumps(payload), datetime.now(timezone.utc).isoformat()),
     )
     conn.commit()
     conn.close()
 
 
-# ── Score helpers ────────────────────────────────────────────────────────────
 def _current_confidence(signals: list) -> int:
     """Estimate current confidence from signals gathered so far."""
     if not signals:
@@ -102,7 +106,6 @@ def _build_summary(
     )
 
 
-# ── Lifespan ─────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
@@ -138,19 +141,42 @@ async def health():
     return {"status": "ok", "heatmap_nodes": len(HEATMAP_CACHE)}
 
 
-# ── Main /verify endpoint with early-exit cascading pipeline ─────────────────
+@app.get("/data-sources")
+async def data_sources():
+    return {
+        "region": "Singapore",
+        "sources": [
+            {"id": "osm_geo", "kind": "OSM/Nominatim/Overpass", "tier": "tier1"},
+            {"id": "gov_data", "kind": "Local SG govt sqlite mirror", "tier": "tier2"},
+            {"id": "sg_gov_live", "kind": "data.gov.sg live APIs", "tier": "tier2"},
+            {"id": "wikidata", "kind": "Wikidata SPARQL", "tier": "tier2"},
+            {"id": "food_platforms", "kind": "Burpple/HungryGoWhere scraping", "tier": "tier3"},
+            {"id": "tripadvisor", "kind": "TripAdvisor typeahead", "tier": "tier3"},
+            {"id": "reddit", "kind": "Reddit public search", "tier": "tier3"},
+            {"id": "wayback", "kind": "Internet Archive CDX", "tier": "tier3"},
+            {"id": "mapillary", "kind": "Mapillary Graph API", "tier": "tier3"},
+        ],
+        "search_engines": {
+            "allowed": ["Brave", "Qwant"],
+            "not_used": ["Google", "Microsoft/Bing"],
+        },
+    }
+
+
 @app.post("/verify", response_model=VerifyResponse)
 async def verify(req: VerifyRequest):
+    started_at = time.perf_counter()
+    pipeline_steps = []
     cache_key = hashlib.sha256(f"{req.name.lower()}|{req.address.lower()}".encode()).hexdigest()
     cached = _cache_get(cache_key)
-    if cached:
+    if cached and cached.get("__schema_version") == CACHE_SCHEMA_VERSION:
         try:
             return VerifyResponse(**cached)
         except Exception:
             # Gracefully recover from stale cache schema drift.
             pass
 
-    # ── TIER 1: Fast geo resolution (~0.5s) ──────────────────────────────────
+    tier1_start = time.perf_counter()
     geo = await fetch_geo(req.name, req.address)
     lat = geo.get("lat") or 1.3521
     lon = geo.get("lon") or 103.8198
@@ -166,26 +192,42 @@ async def verify(req: VerifyRequest):
         "detail": geo.get("detail", ""),
     }
     signals = [geo_signal]
+    pipeline_steps.append({
+        "id": "tier1_geo",
+        "title": "Tier 1 - Geo Resolve",
+        "status": "done",
+        "duration_ms": round((time.perf_counter() - tier1_start) * 1000, 1),
+        "sources": ["osm_geo"],
+    })
 
     early_conf = _current_confidence(signals)
 
-    # ── TIER 2: Fast secondary checks (~2s) ──────────────────────────────────
-    # Always run tier 2 (gov + wikidata + sg_gov_live are fast)
+    tier2_start = time.perf_counter()
     t2_results = await asyncio.gather(
         fetch_gov_data(req.name, lat, lon),
         fetch_wikidata(req.name, osm_id or ""),
         fetch_sg_gov_live(req.name, lat, lon),
         return_exceptions=True,
     )
+    t2_sources = []
     for r in t2_results:
         if isinstance(r, dict):
             signals.append(r)
+            src = r.get("source")
+            if src:
+                t2_sources.append(src)
+    pipeline_steps.append({
+        "id": "tier2_crosscheck",
+        "title": "Tier 2 - Registry Cross-check",
+        "status": "done",
+        "duration_ms": round((time.perf_counter() - tier2_start) * 1000, 1),
+        "sources": t2_sources,
+    })
 
     early_conf = _current_confidence(signals)
 
-    # ── TIER 3: Slow sources — skip if already confident ─────────────────────
-    # Early exit: if confidence ≥ 85% after Tier 2, skip slow sources
     if early_conf < 85:
+        tier3_start = time.perf_counter()
         t3_results = await asyncio.gather(
             fetch_food_platforms(req.name, lat, lon),
             fetch_social_signals(req.name, lat, lon),
@@ -194,11 +236,30 @@ async def verify(req: VerifyRequest):
             fetch_mapillary(lat, lon),
             return_exceptions=True,
         )
+        t3_sources = []
         for r in t3_results:
             if isinstance(r, dict):
                 signals.append(r)
+                src = r.get("source")
+                if src:
+                    t3_sources.append(src)
+        pipeline_steps.append({
+            "id": "tier3_scrape",
+            "title": "Tier 3 - Web and Visual Signals",
+            "status": "done",
+            "duration_ms": round((time.perf_counter() - tier3_start) * 1000, 1),
+            "sources": t3_sources,
+        })
+    else:
+        pipeline_steps.append({
+            "id": "tier3_scrape",
+            "title": "Tier 3 - Web and Visual Signals",
+            "status": "skipped",
+            "duration_ms": 0.0,
+            "sources": [],
+            "reason": "Tier 2 confidence already high",
+        })
 
-    # ── Score ────────────────────────────────────────────────────────────────
     staleness = get_staleness_context(osm_id or "", tag_type, lat, lon)
 
     by_source = {s.get("source"): s for s in signals if isinstance(s, dict)}
@@ -212,6 +273,8 @@ async def verify(req: VerifyRequest):
         by_source.get("mapillary", unknown),
         by_source.get("wikidata", unknown),
         by_source.get("wayback", unknown),
+        by_source.get("sg_gov_live", unknown),
+        by_source.get("tripadvisor", unknown),
     )
     confidence = score_result["confidence"]
     recommendation = score_result["recommendation"]
@@ -220,17 +283,15 @@ async def verify(req: VerifyRequest):
     changeset_diff = generate_changeset_diff(geo) if osm_found else None
     narrative = score_result.get("narrative", "")
 
-    confirmed_from = [
-        s["source"] for s in signals
-        if s.get("status") == "ACTIVE" and s.get("confidence", 0) > 0.4
-    ]
+    considered_sources = score_result.get("considered_sources", [])
+    active_sources = score_result.get("active_sources", [])
+    closure_sources = score_result.get("closure_sources", [])
+    confirmed_from = active_sources or closure_sources or considered_sources
 
-    # ── Nearby places if confidence low ──────────────────────────────────────
     nearby = None
     if confidence < 50 or not osm_found:
         nearby = await fetch_nearby_places(lat, lon, tag_type, exclude_name=req.name)
 
-    # ── Build summary string ─────────────────────────────────────────────────
     db_detail = next(
         (s["detail"] for s in signals if s.get("source") in ("gov_data", "sg_gov_live")
          and s.get("status") != "UNKNOWN"), None
@@ -246,6 +307,14 @@ async def verify(req: VerifyRequest):
     )
 
     source_objs = score_result.get("sources", [])
+    mapillary = by_source.get("mapillary", {})
+    pipeline_steps.append({
+        "id": "scoring",
+        "title": "Final Scoring",
+        "status": "done",
+        "duration_ms": round((time.perf_counter() - started_at) * 1000, 1),
+        "sources": considered_sources,
+    })
 
     result = VerifyResponse(
         summary=summary,
@@ -261,11 +330,22 @@ async def verify(req: VerifyRequest):
         narrative=narrative,
         conflict_flag=conflict_flag,
         confirmed_from=confirmed_from,
+        considered_sources=considered_sources,
+        active_sources=active_sources,
+        closure_sources=closure_sources,
+        source_count=len(considered_sources),
         edit_age_days=edit_age_days,
         neighbourhood_activity_score=staleness.get("neighbourhood_activity_score"),
         prior_p_active=staleness.get("prior_p_active"),
+        visual_delta_score=mapillary.get("visual_delta_score"),
+        change_class=mapillary.get("change_class"),
+        mapillary_before_image_url=mapillary.get("before_image_url"),
+        mapillary_after_image_url=mapillary.get("after_image_url"),
+        mapillary_before_date=mapillary.get("before_date"),
+        mapillary_after_date=mapillary.get("after_date"),
         changeset_diff=changeset_diff,
         nearby_places=nearby,
+        pipeline_steps=pipeline_steps,
         osm_edit_url=f"https://www.openstreetmap.org/node/{osm_id}" if osm_id else None,
     )
 
@@ -273,7 +353,6 @@ async def verify(req: VerifyRequest):
     return result
 
 
-# ── /search endpoint (used by frontend) ─────────────────────────────────────
 @app.get("/search")
 async def search(q: str):
     NOMINATIM = "https://nominatim.openstreetmap.org/search"
@@ -328,24 +407,31 @@ async def search(q: str):
                 pass
 
     if not candidates:
-        return {"error": f"No candidates found for '{q}'", "candidates": []}
+        return {"query": q, "count": 0, "candidates": [], "lat": lat, "lon": lon}
     return {"query": q, "count": len(candidates), "candidates": candidates, "lat": lat, "lon": lon}
 
 
-# ── /heatmap-data ────────────────────────────────────────────────────────────
 @app.get("/heatmap-data")
 async def heatmap_data():
-    return {"nodes": HEATMAP_CACHE}
+    threshold = 0.55
+    stale_count = sum(1 for n in HEATMAP_CACHE if float(n.get("risk", 0.0) or 0.0) >= threshold)
+    return {
+        "nodes": HEATMAP_CACHE,
+        "summary": {
+            "threshold": threshold,
+            "total": len(HEATMAP_CACHE),
+            "stale_count": stale_count,
+            "active_count": len(HEATMAP_CACHE) - stale_count,
+        },
+    }
 
 
-# ── /nearby ──────────────────────────────────────────────────────────────────
 @app.get("/nearby")
 async def nearby_endpoint(lat: float, lon: float, tag: str = "amenity", radius: int = 500):
     places = await fetch_nearby_places(lat, lon, tag_type=tag, radius_m=radius)
     return {"places": [p.model_dump() for p in places]}
 
 
-# ── /submit-changeset ─────────────────────────────────────────────────────────
 @app.post("/submit-changeset")
 async def submit_changeset(osm_id: str, tags_after: dict):
     try:

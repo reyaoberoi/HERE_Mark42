@@ -1,118 +1,283 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pipeline Tester</title>
-    <style>
-        body { font-family: sans-serif; padding: 20px; max-width: 800px; margin: auto; }
-        input { width: 70%; padding: 10px; }
-        button { padding: 10px 20px; cursor: pointer; }
-        #results { margin-top: 20px; background: #f4f4f4; padding: 15px; border-radius: 5px; white-space: pre-wrap; font-family: monospace; }
-        .candidate { border: 1px solid #ccc; padding: 10px; margin: 10px 0; border-radius: 5px; cursor: pointer; transition: background 0.2s; }
-        .candidate:hover { background: #eef; }
-        .header { display: flex; align-items: center; justify-content: space-between; }
-        .status { font-size: 0.8em; color: green; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Singapore POI Verifier</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --card: #ffffff;
+      --line: #d9dee4;
+      --text: #1f2933;
+      --muted: #66788a;
+      --primary: #0b7285;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Segoe UI, Tahoma, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+    .wrap {
+      max-width: 1120px;
+      margin: 20px auto;
+      padding: 0 12px;
+      display: grid;
+      gap: 14px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px;
+    }
+    h1, h2 { margin: 0 0 8px 0; }
+    p { margin: 0; color: var(--muted); }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      font: inherit;
+    }
+    button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 12px;
+      background: #fff;
+      cursor: pointer;
+      font: inherit;
+    }
+    .btn-main {
+      background: var(--primary);
+      color: #fff;
+      border-color: var(--primary);
+    }
+    #map {
+      height: 430px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      margin-top: 10px;
+    }
+    .candidates {
+      display: grid;
+      gap: 6px;
+      margin-top: 10px;
+      max-height: 230px;
+      overflow: auto;
+    }
+    .candidate {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      background: #fff;
+      cursor: pointer;
+    }
+    .candidate:hover { border-color: var(--primary); }
+    .mono {
+      white-space: pre-wrap;
+      font-family: Consolas, monospace;
+      background: #fbfcfd;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      margin-top: 8px;
+    }
+    .small { font-size: 13px; color: var(--muted); }
+    .list { margin-top: 8px; font-size: 14px; color: var(--text); }
+    .list li { margin-bottom: 4px; }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+      #map { height: 320px; }
+    }
+  </style>
 </head>
 <body>
-    <div class="header">
-        <h1>POI Pipeline Tester</h1>
-        <span class="status">Connected to Backend</span>
-    </div>
-    <p>Search for a POI name to find OSM nodes and verify them.</p>
-    
-    <input type="text" id="query" placeholder="e.g. Maxwell Food Centre" onkeypress="if(event.key==='Enter') search()">
-    <button onclick="search()">Search Nodes</button>
+  <main class="wrap">
+    <section class="card">
+      <h1>Singapore POI Verifier</h1>
+      <p>Search a place, run verification, and inspect map attributes directly by clicking markers.</p>
+    </section>
 
-    <div id="candidates"></div>
-    <div id="results">No results yet.</div>
+    <section class="card grid">
+      <div>
+        <h2 style="font-size:18px;">Search</h2>
+        <input id="query" placeholder="Example: Tanglin Mall" />
+        <div class="row">
+          <button class="btn-main" id="searchBtn">Search</button>
+          <button id="clearBtn">Clear</button>
+        </div>
+        <p id="searchStatus" class="small" style="margin-top:8px;">Waiting for search.</p>
+        <div id="candidates" class="candidates"></div>
+      </div>
 
-    <script>
-        const API_BASE = '';
+      <div>
+        <h2 style="font-size:18px;">Verify</h2>
+        <input id="name" placeholder="Place name" />
+        <input id="address" placeholder="Address" style="margin-top:8px;" />
+        <div class="row">
+          <button class="btn-main" id="verifyBtn">Verify</button>
+        </div>
+        <div id="summary" class="mono">No verification run yet.</div>
+      </div>
+    </section>
 
-        async function search() {
-            const q = document.getElementById('query').value;
-            if (!q) return;
+    <section class="card">
+      <h2 style="font-size:18px;">Map Visualization</h2>
+      <p>Click a marker to view source attributes and raw tags.</p>
+      <div id="map"></div>
+    </section>
 
-            const resDiv = document.getElementById('results');
-            const candDiv = document.getElementById('candidates');
-            resDiv.innerText = 'Searching Coordinates & Nodes...';
-            candDiv.innerHTML = '';
+    <section class="card grid">
+      <div>
+        <h2 style="font-size:18px;">Project Data Sources</h2>
+        <ul id="sourceList" class="list"></ul>
+      </div>
+      <div>
+        <h2 style="font-size:18px;">Model Insight</h2>
+        <div id="resultMeta" class="mono">No result metadata yet.</div>
+      </div>
+    </section>
+  </main>
 
-            try {
-                const response = await fetch(`${API_BASE}/search?q=${encodeURIComponent(q)}`);
-                const data = await response.json();
-                
-                if (data.error) {
-                    resDiv.innerText = data.error;
-                    return;
-                }
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const API = "";
+    const map = L.map("map").setView([1.3521, 103.8198], 12);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: "&copy; OpenStreetMap contributors"
+    }).addTo(map);
 
-                const locInfo = (data.lat && data.lon) ? ` near lat: ${data.lat.toFixed(4)}, lon: ${data.lon.toFixed(4)}` : '';
-                resDiv.innerText = `Search for "${q}" returned ${data.candidates.length} candidate nodes${locInfo}. Click a candidate to trigger the full pipeline.`;
-                
-                data.candidates.forEach(c => {
-                    const div = document.createElement('div');
-                    div.className = 'candidate';
-                    div.innerHTML = `<strong>${c.name}</strong> (ID: ${c.osm_node_id})<br><small>${JSON.stringify(c.tags)}</small>`;
-                    div.onclick = () => verify(c);
-                    candDiv.appendChild(div);
-                });
+    const markers = L.layerGroup().addTo(map);
+    const queryEl = document.getElementById("query");
+    const nameEl = document.getElementById("name");
+    const addrEl = document.getElementById("address");
+    const candsEl = document.getElementById("candidates");
+    const searchStatusEl = document.getElementById("searchStatus");
+    const summaryEl = document.getElementById("summary");
+    const sourceListEl = document.getElementById("sourceList");
+    const resultMetaEl = document.getElementById("resultMeta");
 
-                if (data.candidates.length === 0) {
-                    resDiv.innerText += " No OSM nodes found nearby.";
-                }
-
-            } catch (err) {
-                resDiv.style.color = 'red';
-                resDiv.innerText = 'Search Error: ' + err.message;
-            }
+    async function loadSources() {
+      try {
+        const r = await fetch(`${API}/data-sources`);
+        if (!r.ok) {
+          sourceListEl.innerHTML = "<li>Source endpoint unavailable on current server instance.</li>";
+          return;
         }
+        const d = await r.json();
+        sourceListEl.innerHTML = "";
+        (d.sources || []).forEach((s) => {
+          const li = document.createElement("li");
+          li.textContent = `${s.id} (${s.tier}) - ${s.kind}`;
+          sourceListEl.appendChild(li);
+        });
+      } catch {
+        sourceListEl.innerHTML = "<li>Could not load source metadata.</li>";
+      }
+    }
 
-        async function verify(candidate) {
-            const resDiv = document.getElementById('results');
-            const candDiv = document.getElementById('candidates');
-            
-            // Highlight selected
-            const candidates = document.querySelectorAll('.candidate');
-            candidates.forEach(el => el.style.background = 'white');
-            event.currentTarget.style.background = '#dcfce7'; // green-ish highlight
+    function markerPopup(candidate) {
+      const attrs = {
+        name: candidate.name,
+        osm_node_id: candidate.osm_node_id,
+        lat: candidate.lat,
+        lon: candidate.lon,
+        tags: candidate.tags || {}
+      };
+      return `<b>${candidate.name || "Unknown"}</b><br/><pre style="white-space:pre-wrap; margin:6px 0 0 0; font-size:12px;">${JSON.stringify(attrs, null, 2)}</pre>`;
+    }
 
-            resDiv.style.color = 'black';
-            resDiv.innerText = `Running Pipeline for ${candidate.name} (ID: ${candidate.osm_node_id})...`;
+    async function searchPlaces() {
+      const q = queryEl.value.trim();
+      if (!q) return;
+      candsEl.innerHTML = "";
+      markers.clearLayers();
+      searchStatusEl.textContent = "Searching...";
 
-            try {
-                const response = await fetch(`${API_BASE}/verify`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        osm_node_id: candidate.osm_node_id,
-                        lat: candidate.lat,
-                        lon: candidate.lon,
-                        name: candidate.name,
-                        tags: candidate.tags
-                    })
-                });
-                const data = await response.json();
-                
-                // Formatted output
-                let out = `VERIFICATION RESULT\n`;
-                out += `====================\n`;
-                out += `Confidence: ${(data.confidence * 100).toFixed(1)}%\n`;
-                out += `Recommendation: ${data.recommendation}\n`;
-                out += `Narrative: ${data.narrative}\n\n`;
-                out += `Signals:\n`;
-                data.sources.forEach(s => {
-                    out += `- [${s.source.toUpperCase()}] ${s.signal.toUpperCase()} (conf: ${s.confidence.toFixed(2)}) - ${s.detail}\n`;
-                });
-                
-                resDiv.innerText = out;
-            } catch (err) {
-                resDiv.style.color = 'red';
-                resDiv.innerText = 'Verification Error: ' + err.message;
-            }
+      const res = await fetch(`${API}/search?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      const candidates = data.candidates || [];
+      searchStatusEl.textContent = `Found ${candidates.length} candidates.`;
+
+      if (!candidates.length) return;
+
+      const bounds = [];
+      candidates.forEach((c) => {
+        const btn = document.createElement("button");
+        btn.className = "candidate";
+        btn.textContent = `${c.name || "Unknown"} (id: ${c.osm_node_id || "n/a"})`;
+        btn.onclick = () => {
+          nameEl.value = c.name || "";
+          addrEl.value = `${c.name || q} Singapore`;
+          map.setView([c.lat, c.lon], 17);
+        };
+        candsEl.appendChild(btn);
+
+        if (Number.isFinite(c.lat) && Number.isFinite(c.lon)) {
+          bounds.push([c.lat, c.lon]);
+          L.marker([c.lat, c.lon]).bindPopup(markerPopup(c)).addTo(markers);
         }
-    </script>
+      });
+
+      if (bounds.length) {
+        map.fitBounds(bounds, { padding: [20, 20] });
+      }
+    }
+
+    async function verifyPlace() {
+      const name = nameEl.value.trim();
+      const address = addrEl.value.trim();
+      if (!name || !address) return;
+      summaryEl.textContent = "Verifying...";
+
+      const res = await fetch(`${API}/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, address })
+      });
+
+      const data = await res.json();
+      summaryEl.textContent = data.summary || "No summary";
+      resultMetaEl.textContent = JSON.stringify({
+        confidence: data.confidence,
+        recommendation: data.recommendation,
+        predicted_status: data.predicted_status,
+        considered_sources: data.considered_sources,
+        source_count: data.source_count,
+        mapillary_change: data.change_class
+      }, null, 2);
+
+      if (Number.isFinite(data.lat) && Number.isFinite(data.lon)) {
+        L.marker([data.lat, data.lon]).bindPopup(`<b>${data.place_name || name}</b><br/>${address}`).addTo(markers);
+        map.setView([data.lat, data.lon], 16);
+      }
+    }
+
+    document.getElementById("searchBtn").addEventListener("click", searchPlaces);
+    document.getElementById("verifyBtn").addEventListener("click", verifyPlace);
+    document.getElementById("clearBtn").addEventListener("click", () => {
+      candsEl.innerHTML = "";
+      markers.clearLayers();
+      summaryEl.textContent = "No verification run yet.";
+      resultMetaEl.textContent = "No result metadata yet.";
+      searchStatusEl.textContent = "Cleared.";
+    });
+
+    queryEl.addEventListener("keydown", (e) => { if (e.key === "Enter") searchPlaces(); });
+    addrEl.addEventListener("keydown", (e) => { if (e.key === "Enter") verifyPlace(); });
+
+    loadSources();
+  </script>
 </body>
 </html>

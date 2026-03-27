@@ -83,7 +83,7 @@ def load_data_via_docker():
     # We load gis_osm_pois_free layer which contains point POIs
     # and gis_osm_pois_a_free which contains area POIs (like malls/large shops)
     
-    def run_ogr(layer, append=False):
+    def run_ogr(layer, append=False, area_to_centroid=False):
         mode = "-append" if append else "-overwrite"
         cmd = [
             "docker", "run", "--rm",
@@ -100,6 +100,17 @@ def load_data_via_docker():
             mode,
             "-progress"
         ]
+
+        if area_to_centroid:
+            # The area layer has polygon geometries; convert to point centroids so it can be
+            # appended into the same Point table created from gis_osm_pois_free.
+            cmd.extend([
+                "-dialect", "SQLite",
+                "-sql",
+                "SELECT ST_Centroid(geom) AS geom, osm_id, code, fclass, name "
+                "FROM gis_osm_pois_a_free"
+            ])
+
         print(f"Running: {' '.join(cmd)}")
         subprocess.run(cmd, check=True)
 
@@ -110,7 +121,7 @@ def load_data_via_docker():
         
         # Pass 2: Polygons (Append to same table)
         print(">>> Pass 2: Appending area POIs...")
-        run_ogr("gis_osm_pois_a_free", append=True)
+        run_ogr("gis_osm_pois_a_free", append=True, area_to_centroid=True)
         
         print("Data loaded successfully with Singapore filter (Points + Areas).")
         return True

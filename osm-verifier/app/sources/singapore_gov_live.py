@@ -18,39 +18,42 @@ _CKAN_SEARCH = "https://data.gov.sg/api/3/action/resource_search"
 async def fetch_sg_gov_live(name: str, lat: float, lon: float) -> dict:
     """Query Data.gov.sg live APIs for business licence / hygiene grade."""
     try:
-        async with httpx.AsyncClient(timeout=8,
-                                     headers={"User-Agent": "osm-sg-validator/1.0"}) as client:
-            # Query the SFA (Singapore Food Agency) food hygiene dataset using CKAN
+        records = []
+        headers = {"User-Agent": "osm-sg-validator/1.0"}
+        async with httpx.AsyncClient(timeout=8, headers=headers) as client:
+            # Primary: action endpoint (legacy but still widely available)
             resp = await client.get(
                 "https://data.gov.sg/api/action/datastore_search",
                 params={
-                    "resource_id": "d_4a086da0a5553be1d89383cd90d07ecd",  # SFA food licences
+                    "resource_id": "d_4a086da0a5553be1d89383cd90d07ecd",
                     "q": name,
                     "limit": 5,
                 },
             )
-            data = resp.json()
+            if resp.status_code < 400:
+                data = resp.json()
+                records = data.get("result", {}).get("records", [])
 
-        records = data.get("result", {}).get("records", [])
-        if not records:
-            # Try a broader CKAN resource search
-            async with httpx.AsyncClient(timeout=6,
-                                         headers={"User-Agent": "osm-sg-validator/1.0"}) as client:
+            # Fallback: v2 datasets search
+            if not records:
                 r2 = await client.get(
                     "https://api-production.data.gov.sg/v2/public/api/datasets",
                     params={"query": name, "limit": 3},
                 )
-                meta = r2.json()
-            datasets = meta.get("data", {}).get("datasets", [])
-            if not datasets:
-                return {"source": "sg_gov_live", "status": "UNKNOWN", "confidence": 0.0,
-                        "detail": "Not found in Data.gov.sg live APIs"}
-            return {
-                "source": "sg_gov_live",
-                "status": "UNKNOWN",
-                "confidence": 0.15,
-                "detail": f"Dataset mention found: {datasets[0].get('title', '')}",
-            }
+                if r2.status_code < 400:
+                    meta = r2.json()
+                    datasets = meta.get("data", {}).get("datasets", [])
+                    if datasets:
+                        return {
+                            "source": "sg_gov_live",
+                            "status": "UNKNOWN",
+                            "confidence": 0.2,
+                            "detail": f"Dataset mention found: {datasets[0].get('title', '')}",
+                        }
+
+        if not records:
+            return {"source": "sg_gov_live", "status": "UNKNOWN", "confidence": 0.0,
+                    "detail": "Not found in Data.gov.sg live APIs"}
 
         rec = records[0]
         licence_status = str(rec.get("licence_status", rec.get("status", ""))).lower()

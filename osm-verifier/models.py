@@ -48,6 +48,10 @@ class VerifyResponse(BaseModel):
     narrative: str
     conflict_flag: bool
     confirmed_from: List[str] = []
+    considered_sources: List[str] = []
+    active_sources: List[str] = []
+    closure_sources: List[str] = []
+    source_count: int = 0
 
     # Staleness
     edit_age_days: Optional[int] = None
@@ -57,6 +61,10 @@ class VerifyResponse(BaseModel):
     # Mapillary visual
     visual_delta_score: Optional[float] = None
     change_class: Optional[str] = None
+    mapillary_before_image_url: Optional[str] = None
+    mapillary_after_image_url: Optional[str] = None
+    mapillary_before_date: Optional[str] = None
+    mapillary_after_date: Optional[str] = None
 
     # OSM write-back
     changeset_diff: Optional[dict] = None
@@ -64,5 +72,6 @@ class VerifyResponse(BaseModel):
     # Nearby alternatives
     nearby_places: Optional[List[NearbyPlace]] = None
     nearby_context: Optional[str] = None
+    pipeline_steps: Optional[List[dict]] = None
 
     osm_edit_url: Optional[str] = None

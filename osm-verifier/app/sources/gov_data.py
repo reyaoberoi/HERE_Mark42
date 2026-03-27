@@ -4,6 +4,9 @@
 import sqlite3
 import re
 from functools import lru_cache
+from pathlib import Path
+
+DB_PATH = str(Path(__file__).resolve().parents[2] / "gov_data.sqlite")
 
 _vectorizer = None
 _corpus = None     # list of (name, status, address, table)
@@ -20,7 +23,7 @@ def _load_corpus():
         return
     from sklearn.feature_extraction.text import TfidfVectorizer
     try:
-        conn = sqlite3.connect("gov_data.sqlite")
+        conn = sqlite3.connect(DB_PATH)
         rows = []
         for table in ["nea_food", "hawker_stalls", "stb_tourism"]:
             try:

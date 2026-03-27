@@ -5,8 +5,19 @@ import asyncio
 import httpx
 
 MAPILLARY_API = "https://graph.mapillary.com/images"
-TOKEN = os.getenv("MAPILLARY_TOKEN", "")
-HEADERS = {"Authorization": f"OAuth {TOKEN}"} if TOKEN else {}
+
+
+def _mapillary_token() -> str:
+    return os.getenv("MAPILLARY_ACCESS_TOKEN", "") or os.getenv("MAPILLARY_TOKEN", "")
+
+
+def _mapillary_headers(token: str) -> dict:
+    if not token:
+        return {}
+    return {
+        "Authorization": f"OAuth {token}",
+        "User-Agent": "osm-sg-validator/1.0",
+    }
 
 
 async def fetch_mapillary(lat: float, lon: float) -> dict:
@@ -15,12 +26,13 @@ async def fetch_mapillary(lat: float, lon: float) -> dict:
     Compute SSIM structural similarity diff between them.
     If no Mapillary token, returns UNKNOWN gracefully.
     """
-    if not TOKEN:
+    token = _mapillary_token()
+    if not token:
         return {
             "source": "mapillary",
             "status": "UNKNOWN",
             "confidence": 0.0,
-            "detail": "MAPILLARY_TOKEN not set",
+            "detail": "MAPILLARY_ACCESS_TOKEN not set",
             "before_image_url": None, "after_image_url": None,
             "before_date": None, "after_date": None,
             "visual_delta_score": None, "change_class": None,
@@ -28,11 +40,20 @@ async def fetch_mapillary(lat: float, lon: float) -> dict:
 
     try:
         async with httpx.AsyncClient(timeout=12) as client:
-            resp = await client.get(MAPILLARY_API, params={
+            params = {
                 "fields": "id,captured_at,thumb_256_url",
                 "bbox": f"{lon-0.0005},{lat-0.0005},{lon+0.0005},{lat+0.0005}",
                 "limit": 50,
-            }, headers=HEADERS)
+            }
+            resp = await client.get(MAPILLARY_API, params=params, headers=_mapillary_headers(token))
+            if resp.status_code in (401, 403):
+                # Some tokens require Bearer instead of OAuth.
+                resp = await client.get(
+                    MAPILLARY_API,
+                    params=params,
+                    headers={"Authorization": f"Bearer {token}", "User-Agent": "osm-sg-validator/1.0"},
+                )
+            resp.raise_for_status()
             data = resp.json()
             images = data.get("data", [])
 
