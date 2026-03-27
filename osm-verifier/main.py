@@ -5,6 +5,7 @@ import json
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -28,10 +29,11 @@ from app.osm.nearby import fetch_nearby_places
 from app.osm.changeset import submit_osm_changeset
 
 HEATMAP_CACHE = []
+CACHE_DB_PATH = str(Path(__file__).resolve().with_name("cache.db"))
 
 # ── SQLite result cache ──────────────────────────────────────────────────────
 def _cache_db():
-    conn = sqlite3.connect("cache.db")
+    conn = sqlite3.connect(CACHE_DB_PATH)
     conn.execute("""CREATE TABLE IF NOT EXISTS verify_cache (
         key TEXT PRIMARY KEY,
         result TEXT,
@@ -142,7 +144,11 @@ async def verify(req: VerifyRequest):
     cache_key = hashlib.sha256(f"{req.name.lower()}|{req.address.lower()}".encode()).hexdigest()
     cached = _cache_get(cache_key)
     if cached:
-        return VerifyResponse(**cached)
+        try:
+            return VerifyResponse(**cached)
+        except Exception:
+            # Gracefully recover from stale cache schema drift.
+            pass
 
     # ── TIER 1: Fast geo resolution (~0.5s) ──────────────────────────────────
     geo = await fetch_geo(req.name, req.address)
@@ -194,13 +200,25 @@ async def verify(req: VerifyRequest):
 
     # ── Score ────────────────────────────────────────────────────────────────
     staleness = get_staleness_context(osm_id or "", tag_type, lat, lon)
-    score_result = compute_score(signals, staleness)
+
+    by_source = {s.get("source"): s for s in signals if isinstance(s, dict)}
+    unknown = {"status": "UNKNOWN", "confidence": 0.0, "detail": ""}
+    score_result = compute_score(
+        geo,
+        staleness,
+        by_source.get("gov_data", unknown),
+        by_source.get("food_platforms", unknown),
+        by_source.get("reddit", unknown),
+        by_source.get("mapillary", unknown),
+        by_source.get("wikidata", unknown),
+        by_source.get("wayback", unknown),
+    )
     confidence = score_result["confidence"]
     recommendation = score_result["recommendation"]
     predicted_status = score_result["predicted_status"]
     conflict_flag = score_result.get("conflict_flag", False)
-    changeset_diff = generate_changeset_diff(signals, osm_id) if osm_found else None
-    narrative = build_narrative(signals, score_result)
+    changeset_diff = generate_changeset_diff(geo) if osm_found else None
+    narrative = score_result.get("narrative", "")
 
     confirmed_from = [
         s["source"] for s in signals
@@ -227,16 +245,7 @@ async def verify(req: VerifyRequest):
         recommendation=recommendation, db_detail=db_detail,
     )
 
-    source_objs = [
-        SourceSignal(
-            source=s.get("source", "unknown"),
-            status=s.get("status", "UNKNOWN"),
-            confidence=s.get("confidence", 0.0),
-            detail=s.get("detail"),
-            last_activity_date=s.get("last_activity_date"),
-        )
-        for s in signals
-    ]
+    source_objs = score_result.get("sources", [])
 
     result = VerifyResponse(
         summary=summary,

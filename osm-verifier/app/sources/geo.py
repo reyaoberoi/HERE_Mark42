@@ -3,6 +3,7 @@ import httpx
 import sqlite3
 import json
 from datetime import datetime
+from pathlib import Path
 
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
 OVERPASS  = "https://overpass-api.de/api/interpreter"
@@ -10,11 +11,12 @@ OVERPASS  = "https://overpass-api.de/api/interpreter"
 SG_BBOX = (1.2, 103.6, 1.5, 104.0)  # min_lat, min_lon, max_lat, max_lon
 
 HEADERS = {"User-Agent": "osm-sg-validator/1.0 (hackathon)"}
+CACHE_DB_PATH = str(Path(__file__).resolve().parents[2] / "cache.db")
 
 
 def _cache_get(key: str):
     try:
-        conn = sqlite3.connect("cache.db")
+        conn = sqlite3.connect(CACHE_DB_PATH)
         conn.execute("CREATE TABLE IF NOT EXISTS geo_cache (key TEXT PRIMARY KEY, value TEXT, created_at TEXT)")
         row = conn.execute("SELECT value FROM geo_cache WHERE key=?", (key,)).fetchone()
         conn.close()
@@ -25,7 +27,7 @@ def _cache_get(key: str):
 
 def _cache_set(key: str, value: dict):
     try:
-        conn = sqlite3.connect("cache.db")
+        conn = sqlite3.connect(CACHE_DB_PATH)
         conn.execute("CREATE TABLE IF NOT EXISTS geo_cache (key TEXT PRIMARY KEY, value TEXT, created_at TEXT)")
         conn.execute("INSERT OR REPLACE INTO geo_cache VALUES (?,?,?)",
                      (key, json.dumps(value), datetime.utcnow().isoformat()))
@@ -122,6 +124,7 @@ async def fetch_geo(name: str, address: str) -> dict:
             "osm_id": osm_node.get("osm_id"),
             "osm_type": osm_node.get("osm_type"),
             "tags": tags,
+            "website": tags.get("website", None),
             "tag_type": tag_type,
             "edit_age_days": edit_age_days,
             "postal_code": _extract_postal(address),
