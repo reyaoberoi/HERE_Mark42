@@ -32,11 +32,10 @@ from typing import Optional
 # stats     : population-level staleness percentile signal
 # social_signal  : Reddit SG + DuckDuckGo presence
 WEIGHTS: dict[str, float] = {
-    "gov_data":       0.25,
+    "gov_data":       0.30,
     "wikidata":       0.05,
-    "geo":            0.25,
+    "geo":            0.30,
     "food_platforms": 0.25,
-    "stats":          0.10,
     "social_signal":  0.10,
 }
 

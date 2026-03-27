@@ -14,7 +14,7 @@ from sentence_transformers import SentenceTransformer, util
 DB_PATH = Path("gov_data.sqlite")
 MODEL = None  # lazy load
 
-MATCH_THRESHOLD = 0.82
+MATCH_THRESHOLD = 0.80
 
 DATASETS = {
     "nea_food": "https://data.gov.sg/api/action/datastore_search?resource_id=d_4a686577e74131a8d5bc9a7cf6b8a559&limit=10000",

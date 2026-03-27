@@ -23,7 +23,6 @@ from dotenv import load_dotenv
 
 from models import VerifyRequest, VerifyResponse, SourceResult
 from app.sources.geo import get_geo_signal, geocode_nominatim, query_overpass_nearby, geocode_onemap
-from app.sources.stats import get_staleness_signal, get_neighbourhood_density, load_stats
 from app.sources.gov_data import check_gov_data
 from app.sources.wikidata import check_wikidata
 from app.sources.food_platforms import check_food_platforms
@@ -42,10 +41,20 @@ def generate_map(lat, lon, result):
     elif result.get("recommendation") == "REJECT": color = "red"
     elif result.get("recommendation") == "REVIEW": color = "orange"
     
+    tags = result.get("tags", {})
+    name = result.get("name") or tags.get("name") or tags.get("brand") or tags.get("amenity") or tags.get("shop") or "Unnamed POI"
+    
+    tags_html = ""
+    if tags:
+        tags_list = "".join([f"<li><b>{k}:</b> {v}</li>" for k, v in tags.items()])
+        tags_html = f"<div style='margin-top: 5px; max-height: 150px; overflow-y: auto;'><hr><b>Tags:</b><ul style='padding-left: 20px; margin-top: 5px;'>{tags_list}</ul></div>"
+        
+    popup_html = f"<b>{name}</b><br>ID: {result.get('osm_node_id', 'Unknown')}<br>Status: {result.get('recommendation', '')}{tags_html}"
+
     folium.Marker(
         [lat, lon],
-        popup=f"<b>{result.get('osm_node_id', 'Unknown')}</b><br>{result.get('recommendation', '')}",
-        tooltip=result.get('recommendation', 'POI'),
+        popup=folium.Popup(popup_html, max_width=300),
+        tooltip=name,
         icon=folium.Icon(color=color)
     ).add_to(m)
     return m.get_root().render()
@@ -146,12 +155,16 @@ async def search(q: str):
                                 f"%{q}%", q, f"%{q}%", f"{q}%", q, q))
             rows = cur.fetchall()
             for r in rows:
+                tags = r[4] or {}
+                name = r[1]
+                if not name:
+                    name = tags.get("brand") or tags.get("amenity") or tags.get("shop") or "Unnamed POI"
                 candidates.append({
                     "osm_node_id": str(r[0]),
-                    "name": r[1],
+                    "name": name,
                     "lat": r[2],
                     "lon": r[3],
-                    "tags": r[4] or {}
+                    "tags": tags
                 })
         conn.close()
         logger.info(f"Local search found {len(candidates)} candidates")
@@ -172,9 +185,12 @@ async def search(q: str):
                 # Avoid duplicates
                 if not any(c["osm_node_id"] == node_id for c in candidates):
                     tags = node.get("tags", {})
+                    name = tags.get("name")
+                    if not name:
+                         name = tags.get("brand") or tags.get("amenity") or tags.get("shop") or "Unnamed POI"
                     candidates.append({
                         "osm_node_id": node_id,
-                        "name": tags.get("name", "Unknown"),
+                        "name": name,
                         "lat": node.get("lat"),
                         "lon": node.get("lon"),
                         "tags": tags
@@ -235,44 +251,8 @@ async def verify(req: VerifyRequest):
     food_raw   = _safe(food_raw,   "food_platforms")
     social_raw = _safe(social_raw, "social_signal")
 
-    #2. Stats signal — try geo meta first, fallback to direct OSM node lookup
-    stats_cache = load_stats()
-    edit_age = geo_raw.get("meta", {}).get("edit_age_days") if isinstance(geo_raw.get("meta"), dict) else None
-
-    # If geo didn't provide edit age, try direct OSM node lookup
-    if edit_age is None and req.osm_node_id:
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                osm_resp = await client.get(
-                    f"https://api.openstreetmap.org/api/0.6/node/{req.osm_node_id}.json",
-                    headers={"User-Agent": "osm-verifier/1.0"}
-                )
-                if osm_resp.status_code == 200:
-                    node_data = osm_resp.json().get("elements", [{}])[0]
-                    timestamp = node_data.get("timestamp")
-                    if timestamp:
-                        from datetime import datetime, timezone
-                        edited_at = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-                        edit_age = (datetime.now(timezone.utc) - edited_at).days
-                        logger.info(f"Direct OSM lookup: node {req.osm_node_id} last edited {edit_age} days ago")
-        except Exception as e:
-            logger.warning(f"Direct OSM node lookup failed: {e}")
-
-    if edit_age is not None:
-        stats_raw = get_staleness_signal(edit_age, tag_type, stats_cache)
-    else:
-        stats_raw = {
-            "source": "stats",
-            "signal": "unknown",
-            "confidence": 0.1,
-            "detail": "No edit age available",
-        }
-
-    #3. Neighbourhood density
-    density = get_neighbourhood_density(req.lat, req.lon, stats_cache)
-
-    #4. Weighted scorer
-    all_sources = [geo_raw, gov_raw, wiki_raw, food_raw, stats_raw, social_raw]
+    #2. Weighted scorer
+    all_sources = [geo_raw, gov_raw, wiki_raw, food_raw, social_raw]
     scorer_inputs = [source_input_from_dict(s) for s in all_sources]
     result = compute_score(scorer_inputs)
 
@@ -319,8 +299,7 @@ async def verify(req: VerifyRequest):
 
     narrative = (
         f"[{baseline_info}]\n"
-        f"{result.narrative} | "
-        f"Area density: {density} nodes/500m cell"
+        f"{result.narrative}"
     )
 
     return VerifyResponse(
@@ -335,7 +314,6 @@ async def verify(req: VerifyRequest):
             "weighted_score": result.weighted_score,
             "source_breakdown": result.source_breakdown,
             "unknown_sources": result.unknown_sources,
-            "neighbourhood_density": density,
         },
     )
 
@@ -350,23 +328,19 @@ async def get_map(
     try:
         geo_result = await get_geo_signal(name=name or "Unknown", lat=lat, lon=lon, postal_code="")
 
-        stats_cache = load_stats()
-        edit_age = (geo_result.get("meta") or {}).get("edit_age_days")
-        stats_result = get_staleness_signal(edit_age, None, stats_cache) if edit_age else {
-            "source": "stats", "signal": "unknown", "confidence": 0.1, "detail": "No edit age"
-        }
+        tags = (geo_result.get("meta") or {}).get("tags", {})
 
         result = {
             "osm_node_id": osm_node_id,
+            "name": name,
             "confidence": geo_result.get("confidence", 0),
             "recommendation": geo_result.get("recommendation", "REVIEW"),
+            "tags": tags,
             "sources": [
                 {"source": "geo", "signal": geo_result.get("signal"),
-                 "confidence": geo_result.get("confidence"), "detail": geo_result.get("detail")},
-                {"source": "stats", "signal": stats_result.get("signal"),
-                 "confidence": stats_result.get("confidence"), "detail": stats_result.get("detail")}
+                 "confidence": geo_result.get("confidence"), "detail": geo_result.get("detail")}
             ],
-            "narrative": f"Geo: {geo_result.get('detail')} | Stats: {stats_result.get('detail')}"
+            "narrative": f"Geo: {geo_result.get('detail')}"
         }
 
         map_html = generate_map(lat, lon, result)

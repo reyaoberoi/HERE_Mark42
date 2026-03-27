@@ -30,9 +30,9 @@ def _scrape_burpple_sync(name: str, location: str = "Singapore") -> dict:
     }
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.firefox.launch(headless=True)
             page = browser.new_page()
-            page.set_extra_http_headers({"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"})
+            page.set_extra_http_headers({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0 DuckDuckGo/7"})
 
             query = f"{name} {location}"
             url = f"https://www.burpple.com/search/food?q={query.replace(' ', '+')}"
@@ -90,9 +90,9 @@ def _scrape_hungrygowhere_sync(name: str, location: str = "Singapore") -> dict:
     }
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.firefox.launch(headless=True)
             page = browser.new_page()
-            page.set_extra_http_headers({"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"})
+            page.set_extra_http_headers({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0 DuckDuckGo/7"})
 
             query = f"{name} {location}"
             url = f"https://www.hungrygowhere.com/search/?query={query.replace(' ', '+')}"
@@ -133,10 +133,6 @@ def _scrape_hungrygowhere_sync(name: str, location: str = "Singapore") -> dict:
 
 
 async def check_food_platforms(name: str, location: str = "Singapore") -> dict:
-    """
-    Run Burpple + HungryGoWhere in parallel threads.
-    Uses sync Playwright in a thread pool to avoid Windows asyncio subprocess issues.
-    """
     try:
         loop = asyncio.get_event_loop()
         burpple_fut = loop.run_in_executor(
@@ -149,7 +145,6 @@ async def check_food_platforms(name: str, location: str = "Singapore") -> dict:
             burpple_fut, hgw_fut, return_exceptions=True
         )
 
-        # Handle exceptions from gather
         if isinstance(burpple, Exception):
             logger.error("Burpple scrape failed: %s", burpple)
             burpple = {"source": "burpple", "scrape_found": False, "last_activity_date": None, "closed_signal": False, "detail": str(burpple)}
@@ -157,10 +152,8 @@ async def check_food_platforms(name: str, location: str = "Singapore") -> dict:
             logger.error("HungryGoWhere scrape failed: %s", hgw)
             hgw = {"source": "hungrygowhere", "scrape_found": False, "last_activity_date": None, "closed_signal": False, "detail": str(hgw)}
 
-        # Determine combined signal
         closed = burpple["closed_signal"] or hgw["closed_signal"]
 
-        # Latest date across both
         dates = [d for d in [burpple["last_activity_date"], hgw["last_activity_date"]] if d]
         last_date = max(dates) if dates else None
 
@@ -168,7 +161,6 @@ async def check_food_platforms(name: str, location: str = "Singapore") -> dict:
             signal = "closed"
             confidence = 0.85
         elif last_date:
-            # Older than 18 months → flatline signal
             try:
                 age_days = (datetime.now() - datetime.strptime(last_date, "%Y-%m-%d")).days
                 if age_days > 548:  # 18 months
@@ -207,7 +199,6 @@ async def check_food_platforms(name: str, location: str = "Singapore") -> dict:
         }
 
 
-# ── Quick test ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     result = asyncio.run(check_food_platforms("Lau Pa Sat"))
     print(result)
